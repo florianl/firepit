@@ -1,0 +1,4 @@
+firepit
+cmd/firepit/web/d3.v7.min.js
+cmd/firepit/web/d3-flamegraph.min.js
+cmd/firepit/web/d3-flamegraph.css
