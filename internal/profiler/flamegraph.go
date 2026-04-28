@@ -17,7 +17,7 @@ type FlameNode struct {
 	Children []*FlameNode `json:"children,omitempty"`
 }
 
-type NamedFlameGraph struct {
+type NamedFlamegraph struct {
 	Type string     `json:"type"`
 	Root *FlameNode `json:"root"`
 }
@@ -86,7 +86,7 @@ func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []s
 	return filtered
 }
 
-func ToFlameGraph(entries []store.ProfileEntry) *FlameNode {
+func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 	root := &FlameNode{
 		Name:     "root",
 		Value:    0,

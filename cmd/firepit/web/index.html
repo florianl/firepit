@@ -225,6 +225,42 @@
             opacity: 1 !important;
             fill: #000000 !important;
         }
+        .view-mode-filter {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .view-mode-filter label {
+            color: white;
+            font-size: 13px;
+        }
+        .view-mode-filter select {
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .view-mode-filter select option {
+            background-color: #2c3e50;
+            color: white;
+        }
+        .view-mode-filter select:hover {
+            background-color: rgba(255, 255, 255, 0.15);
+        }
+        #heatmap-tooltip {
+            position: fixed;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+        }
     </style>
 </head>
 <body>
@@ -233,6 +269,13 @@
         <div class="header-controls">
             <div class="header-controls-left">
                 <button class="pause-btn" id="pause-btn">Pause</button>
+                <div class="view-mode-filter">
+                    <label for="view-select">View:</label>
+                    <select id="view-select">
+                        <option value="flamegraph">Flame Graph</option>
+                        <option value="heatmap">Flamescope</option>
+                    </select>
+                </div>
                 <div class="resource-filter">
                     <label for="resource-select">Filter:</label>
                     <select id="resource-select">
@@ -259,6 +302,7 @@
         </div>
     </div>
     <div id="charts"></div>
+    <div id="heatmap-tooltip"></div>
 
     <script>
         let updateInterval = null;
@@ -267,6 +311,8 @@
         let selectedResourceType = '';
         let frameFilter = '';
         let currentGraphs = null;
+        let viewMode = 'flamegraph';
+        let currentHeatMaps = null;
 
         function sanitizeId(str) {
             return str.replace(/[()]/g, '_');
@@ -281,8 +327,10 @@
             if (isPaused) {
                 clearInterval(updateInterval);
                 btn.textContent = 'Resume';
-                filterContainer.classList.add('visible');
-                filterInput.focus();
+                if (viewMode === 'flamegraph') {
+                    filterContainer.classList.add('visible');
+                    filterInput.focus();
+                }
             } else {
                 filterContainer.classList.remove('visible');
                 frameFilter = '';
@@ -291,6 +339,17 @@
                 updateInterval = setInterval(updateChart, 5000);
                 btn.textContent = 'Pause';
             }
+        }
+
+        function onViewModeChange(selectedMode) {
+            viewMode = selectedMode;
+            const filterContainer = document.getElementById('filter-container');
+            if (viewMode === 'heatmap' && isPaused) {
+                filterContainer.classList.remove('visible');
+            } else if (viewMode === 'flamegraph' && isPaused) {
+                filterContainer.classList.add('visible');
+            }
+            updateChart();
         }
 
 function applyFrameFilter() {
@@ -403,6 +462,62 @@ function applyFrameFilter() {
 
         function updateChart() {
             const query = selectedResourceType ? '?resourceType=' + encodeURIComponent(selectedResourceType) : '';
+
+            if (viewMode === 'heatmap') {
+                fetchAndRenderHeatMap(query);
+            } else {
+                fetchAndRenderFlamegraph(query);
+            }
+
+            // Profile count / time range
+            fetch('/api/profiles')
+                .then(r => r.json())
+                .then(data => {
+                    if (data) {
+                        document.getElementById('profile-count').textContent = data.count || 0;
+                        if (data.timeRange)
+                            document.getElementById('time-range').textContent = data.timeRange;
+                    }
+                })
+                .catch(() => {});
+
+            // Resource types dropdown
+            fetch('/api/resource-types')
+                .then(r => r.json())
+                .then(types => {
+                    if (!types) return;
+                    const select = document.getElementById('resource-select');
+                    const currentValue = select.value;
+                    const existingOptions = Array.from(select.options).slice(1).map(o => o.value);
+                    const newTypes = types || [];
+
+                    // Only update if types have changed
+                    if (existingOptions.length !== newTypes.length ||
+                        !existingOptions.every((v, i) => v === newTypes[i])) {
+                        // Clear existing options except the first "All" option
+                        while (select.options.length > 1) {
+                            select.remove(1);
+                        }
+                        // Add new options
+                        newTypes.forEach(type => {
+                            const option = document.createElement('option');
+                            option.value = type;
+                            option.textContent = type;
+                            select.appendChild(option);
+                        });
+                    }
+
+                    // Restore previous selection if still valid
+                    if (currentValue && Array.from(select.options).some(o => o.value === currentValue)) {
+                        select.value = currentValue;
+                    } else if (currentValue) {
+                        select.value = '';
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function fetchAndRenderFlamegraph(query) {
             fetch('/api/flamegraph' + query)
                 .then(r => r.json())
                 .then(graphs => {
@@ -472,58 +587,218 @@ function applyFrameFilter() {
                         '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
                 });
 
-            // Profile count / time range
-            fetch('/api/profiles')
+            document.getElementById('last-update').textContent =
+                new Date().toLocaleTimeString();
+        }
+
+        function fetchAndRenderHeatMap(query) {
+            fetch('/api/flamescope' + query)
                 .then(r => r.json())
-                .then(data => {
-                    if (data) {
-                        document.getElementById('profile-count').textContent = data.count || 0;
-                        if (data.timeRange)
-                            document.getElementById('time-range').textContent = data.timeRange;
+                .then(hmaps => {
+                    currentHeatMaps = hmaps;
+                    const strip  = document.getElementById('tab-strip');
+                    const charts = document.getElementById('charts');
+
+                    const noData = !hmaps || hmaps.length === 0 ||
+                                   hmaps.every(h => !h.data || h.data.numSeconds === 0);
+
+                    if (noData) {
+                        strip.style.display = 'none';
+                        charts.innerHTML = '<div class="waiting">Waiting for profiles...</div>';
+                        return;
                     }
-                })
-                .catch(() => {});
 
-            // Resource types dropdown
-            fetch('/api/resource-types')
-                .then(r => r.json())
-                .then(types => {
-                    if (!types) return;
-                    const select = document.getElementById('resource-select');
-                    const currentValue = select.value;
-                    const existingOptions = Array.from(select.options).slice(1).map(o => o.value);
-                    const newTypes = types || [];
+                    if (activeTab === null || !hmaps.find(h => h.type === activeTab)) {
+                        activeTab = hmaps[0].type;
+                    }
 
-                    // Only update if types have changed
-                    if (existingOptions.length !== newTypes.length ||
-                        !existingOptions.every((v, i) => v === newTypes[i])) {
-                        // Clear existing options except the first "All" option
-                        while (select.options.length > 1) {
-                            select.remove(1);
-                        }
-                        // Add new options
-                        newTypes.forEach(type => {
-                            const option = document.createElement('option');
-                            option.value = type;
-                            option.textContent = type;
-                            select.appendChild(option);
+                    // Rebuild tab strip
+                    strip.style.display = 'flex';
+                    strip.innerHTML = '';
+                    hmaps.forEach(h => {
+                        const btn = document.createElement('button');
+                        btn.className = 'tab-btn' + (h.type === activeTab ? ' active' : '');
+                        btn.textContent = h.type;
+                        btn.dataset.type = h.type;
+                        btn.addEventListener('click', () => {
+                            activeTab = h.type;
+                            document.querySelectorAll('.tab-btn').forEach(
+                                b => b.classList.toggle('active', b.dataset.type === activeTab)
+                            );
+                            renderHeatMapForType(activeTab);
                         });
-                    }
+                        strip.appendChild(btn);
+                    });
 
-                    // Restore previous selection if still valid
-                    if (currentValue && Array.from(select.options).some(o => o.value === currentValue)) {
-                        select.value = currentValue;
-                    } else if (currentValue) {
-                        select.value = '';
-                    }
+                    // Render initial heatmap
+                    charts.innerHTML = '';
+                    renderHeatMapForType(activeTab);
+                    document.getElementById('last-update').textContent =
+                        new Date().toLocaleTimeString();
                 })
-                .catch(() => {});
+                .catch(err => {
+                    document.getElementById('charts').innerHTML =
+                        '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                });
+        }
+
+        function renderHeatMapForType(type) {
+            const charts = document.getElementById('charts');
+            const entry = (currentHeatMaps || []).find(h => h.type === type);
+            if (!entry || !entry.data || entry.data.numSeconds === 0) {
+                charts.innerHTML = '<div class="waiting">No heatmap data for ' + type + '</div>';
+                return;
+            }
+            renderHeatMap(charts, entry.data);
+        }
+
+        function renderHeatMap(container, d) {
+            const marginTop    = 30;
+            const marginRight  = 20;
+            const marginBottom = 60;
+            const marginLeft   = 60;
+
+            const totalWidth   = document.documentElement.clientWidth;
+            const totalHeight  = Math.max(420, window.innerHeight - 240);
+            const innerWidth   = totalWidth  - marginLeft - marginRight;
+            const innerHeight  = totalHeight - marginTop  - marginBottom;
+
+            // Scales
+            const xScale = d3.scaleLinear()
+                .domain([0, d.numSeconds])
+                .range([0, innerWidth]);
+
+            const yScale = d3.scaleLinear()
+                .domain([0, d.numSubBuckets])
+                .range([0, innerHeight]);
+
+            const cellW = innerWidth  / d.numSeconds;
+            const cellH = innerHeight / d.numSubBuckets;
+
+            // Color scale: white to dark red (similar to opentelemetry-ebpf-profiler)
+            const color = d3.scaleSequential(d3.interpolateRgb('#ffffff', '#8b0000'))
+                .domain([0, d.maxValue || 1]);
+
+            container.innerHTML = '';
+            const svg = d3.select(container).append('svg')
+                .attr('width',  totalWidth)
+                .attr('height', totalHeight);
+
+            const g = svg.append('g')
+                .attr('transform', `translate(${marginLeft},${marginTop})`);
+
+            // Build cell data (only non-zero cells)
+            const cellData = [];
+            for (let xi = 0; xi < d.numSeconds; xi++) {
+                for (let yi = 0; yi < d.numSubBuckets; yi++) {
+                    const v = d.cells[xi * d.numSubBuckets + yi];
+                    if (v > 0) cellData.push({ xi, yi, v });
+                }
+            }
+
+            const tooltip = document.getElementById('heatmap-tooltip');
+
+            // Render cells
+            g.selectAll('rect.hm-cell')
+                .data(cellData)
+                .join('rect')
+                .attr('class', 'hm-cell')
+                .attr('x', c => xScale(c.xi))
+                .attr('y', c => yScale(c.yi))
+                .attr('width',  Math.max(cellW, 1))
+                .attr('height', Math.max(cellH, 1))
+                .attr('fill', c => color(c.v))
+                .on('mousemove', function(event, c) {
+                    const offsetMs = c.yi * d.subBucketMs;
+                    const wallSec  = d.minTimeSec + c.xi;
+                    const wallTime = new Date(wallSec * 1000).toLocaleTimeString();
+                    tooltip.style.display  = 'block';
+                    tooltip.style.left     = (event.clientX + 12) + 'px';
+                    tooltip.style.top      = (event.clientY - 28) + 'px';
+                    tooltip.textContent    =
+                        `t=${wallTime} +${offsetMs}ms  samples=${c.v}`;
+                })
+                .on('mouseleave', () => { tooltip.style.display = 'none'; });
+
+            // X-axis labels (wall-clock time)
+            const tickStep = Math.max(1, Math.round(d.numSeconds / 10));
+            const xTicks = d3.range(0, d.numSeconds, tickStep);
+
+            const xAxis = g.append('g')
+                .attr('transform', `translate(0, ${innerHeight})`);
+            xTicks.forEach(xi => {
+                const wallSec = d.minTimeSec + xi;
+                const label   = new Date(wallSec * 1000).toLocaleTimeString();
+                xAxis.append('text')
+                    .attr('x', xScale(xi))
+                    .attr('y', 20)
+                    .attr('font-size', '11px')
+                    .attr('fill', '#555')
+                    .attr('text-anchor', 'middle')
+                    .text(label);
+                xAxis.append('line')
+                    .attr('x1', xScale(xi)).attr('x2', xScale(xi))
+                    .attr('y1', 0).attr('y2', 5)
+                    .attr('stroke', '#aaa');
+            });
+            xAxis.append('text')
+                .attr('x', innerWidth / 2).attr('y', 50)
+                .attr('text-anchor', 'middle')
+                .attr('font-size', '12px').attr('fill', '#333')
+                .text('Time');
+
+            // Y-axis labels (sub-second offset)
+            const yTickCount = 10;
+            const yAxis = g.append('g');
+            d3.range(0, d.numSubBuckets + 1, d.numSubBuckets / yTickCount).forEach(yi => {
+                const ms = Math.round(yi * d.subBucketMs);
+                yAxis.append('text')
+                    .attr('x', -8).attr('y', yScale(yi) + cellH / 2)
+                    .attr('text-anchor', 'end')
+                    .attr('dominant-baseline', 'middle')
+                    .attr('font-size', '11px').attr('fill', '#555')
+                    .text(ms + 'ms');
+                yAxis.append('line')
+                    .attr('x1', -4).attr('x2', 0)
+                    .attr('y1', yScale(yi)).attr('y2', yScale(yi))
+                    .attr('stroke', '#aaa');
+            });
+            yAxis.append('text')
+                .attr('transform', `rotate(-90)`)
+                .attr('x', -(innerHeight / 2)).attr('y', -45)
+                .attr('text-anchor', 'middle')
+                .attr('font-size', '12px').attr('fill', '#333')
+                .text('Sub-second offset');
+
+            // Color legend (white to dark red)
+            const legendW = 120, legendH = 10;
+            const legendX = innerWidth - legendW;
+            const legendY = -20;
+            const defs  = svg.append('defs');
+            const grad  = defs.append('linearGradient').attr('id', 'hm-legend-grad')
+                .attr('x1', '0%').attr('y1', '0%')
+                .attr('x2', '100%').attr('y2', '0%');
+            grad.append('stop').attr('offset', '0%').attr('stop-color', '#ffffff');
+            grad.append('stop').attr('offset', '50%').attr('stop-color', '#ff6b6b');
+            grad.append('stop').attr('offset', '100%').attr('stop-color', '#8b0000');
+            g.append('rect')
+                .attr('x', legendX).attr('y', legendY)
+                .attr('width', legendW).attr('height', legendH)
+                .attr('fill', 'url(#hm-legend-grad)');
+            g.append('text').attr('x', legendX).attr('y', legendY - 2)
+                .attr('font-size', '10px').attr('fill', '#555').text('0');
+            g.append('text').attr('x', legendX + legendW).attr('y', legendY - 2)
+                .attr('text-anchor', 'end')
+                .attr('font-size', '10px').attr('fill', '#555').text(d.maxValue);
         }
 
         function init() {
             updateChart();
             updateInterval = setInterval(updateChart, 5000);
             document.getElementById('pause-btn').addEventListener('click', togglePause);
+            document.getElementById('view-select').addEventListener('change', (e) => {
+                onViewModeChange(e.target.value);
+            });
             document.getElementById('resource-select').addEventListener('change', (e) => {
                 selectedResourceType = e.target.value;
                 updateChart();

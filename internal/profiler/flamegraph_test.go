@@ -9,9 +9,9 @@ import (
 	"github.com/florianl/firepit/internal/store"
 )
 
-func TestToFlameGraphEmpty(t *testing.T) {
+func TestToFlamegraphEmpty(t *testing.T) {
 	entries := []store.ProfileEntry{}
-	root := ToFlameGraph(entries)
+	root := ToFlamegraph(entries)
 
 	if root == nil {
 		t.Fatal("Root should not be nil")
@@ -26,7 +26,7 @@ func TestToFlameGraphEmpty(t *testing.T) {
 	}
 }
 
-func TestToFlameGraphWithProfile(t *testing.T) {
+func TestToFlamegraphWithProfile(t *testing.T) {
 	dict := &profilespb.ProfilesDictionary{
 		StringTable: []string{"root", "func1", "func2"},
 		LocationTable: []*profilespb.Location{
@@ -76,7 +76,7 @@ func TestToFlameGraphWithProfile(t *testing.T) {
 		Dictionary: dict,
 	}
 
-	root := ToFlameGraph([]store.ProfileEntry{entry})
+	root := ToFlamegraph([]store.ProfileEntry{entry})
 
 	if root.Value != 100 {
 		t.Fatalf("Expected root value 100, got %d", root.Value)
@@ -194,8 +194,8 @@ func TestFilterByResourceTypeNilAttributes(t *testing.T) {
 	}
 }
 
-func TestNamedFlameGraph(t *testing.T) {
-	ng := NamedFlameGraph{
+func TestNamedFlamegraph(t *testing.T) {
+	ng := NamedFlamegraph{
 		Type: "cpu",
 		Root: &FlameNode{
 			Name:  "root",
