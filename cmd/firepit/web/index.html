@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>firepit - OTel Profile Visualizer</title>
+    <script src="d3.v7.min.js"></script>
+    <script src="d3-flamegraph.min.js"></script>
+    <link rel="stylesheet" href="d3-flamegraph.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+            scrollbar-gutter: stable;
+        }
+        .header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .header-info {
+            font-size: 14px;
+            opacity: 0.9;
+            display: flex;
+            gap: 20px;
+        }
+        #charts {
+            background-color: white;
+            min-height: 400px;
+            overflow: auto;
+            width: 100%;
+            scrollbar-gutter: stable;
+        }
+        .tab-panel {
+            width: 100%;
+        }
+        .flame-graph {
+            width: 100%;
+        }
+        .status-box {
+            padding: 20px;
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+        }
+        .waiting {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 400px;
+            font-size: 16px;
+            color: #999;
+        }
+        .tab-strip {
+            display: flex;
+            gap: 4px;
+            padding: 8px 12px;
+            background: #ecf0f1;
+            border-bottom: 1px solid #ddd;
+            flex-wrap: wrap;
+        }
+        .tab-btn {
+            background: white;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px 4px 0 0;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #555;
+            transition: background-color 0.15s;
+        }
+        .tab-btn:hover {
+            background: #d0d7de;
+        }
+        .tab-btn.active {
+            background: #2c3e50;
+            color: white;
+            border-color: #2c3e50;
+        }
+        .tab-panel {
+            display: none;
+        }
+        .tab-panel.active {
+            display: block;
+        }
+        .header-controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 12px;
+            gap: 20px;
+        }
+        .header-controls-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .header-controls-right {
+            display: flex;
+            align-items: center;
+        }
+        .pause-btn {
+            background-color: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background-color 0.2s;
+        }
+        .pause-btn:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        .pause-btn:active {
+            background-color: rgba(255, 255, 255, 0.4);
+        }
+        .resource-filter {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .resource-filter label {
+            color: white;
+            font-size: 13px;
+        }
+        .resource-filter select {
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .resource-filter select option {
+            background-color: #2c3e50;
+            color: white;
+        }
+        .resource-filter select:hover {
+            background-color: rgba(255, 255, 255, 0.15);
+        }
+        .filter-container {
+            max-height: 0;
+            overflow: hidden;
+            padding: 0;
+            background-color: #34495e;
+            border-bottom: 1px solid #2c3e50;
+            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+        }
+        .filter-container.visible {
+            max-height: 100px;
+            padding: 12px 20px;
+        }
+        .filter-input-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: space-between;
+        }
+        .filter-input-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+        .filter-input-group label {
+            color: white;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .filter-input-group input {
+            background-color: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            min-width: 300px;
+        }
+        .filter-input-group input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+        .filter-input-group input:focus {
+            outline: none;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+        .export-btn {
+            background-color: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background-color 0.2s;
+            white-space: nowrap;
+        }
+        .export-btn:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        .export-btn:active {
+            background-color: rgba(255, 255, 255, 0.4);
+        }
+        svg .flame-dimmed rect {
+            fill: #888888 !important;
+            opacity: 0.5;
+        }
+        svg .flame-dimmed text {
+            fill: #666666 !important;
+            opacity: 0.5;
+        }
+        svg g.flame-highlight rect {
+            opacity: 1 !important;
+        }
+        svg g.flame-highlight text {
+            opacity: 1 !important;
+            fill: #000000 !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔥 firepit</h1>
+        <div class="header-controls">
+            <div class="header-controls-left">
+                <button class="pause-btn" id="pause-btn">Pause</button>
+                <div class="resource-filter">
+                    <label for="resource-select">Filter:</label>
+                    <select id="resource-select">
+                        <option value="">All</option>
+                    </select>
+                </div>
+            </div>
+            <div class="header-info header-controls-right">
+                <span>Profiles: <span id="profile-count">-</span></span>
+                <span>Last updated: <span id="last-update">never</span></span>
+                <span>Time range: <span id="time-range">-</span></span>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-strip" class="tab-strip" style="display:none"></div>
+    <div id="filter-container" class="filter-container">
+        <div class="filter-input-group">
+            <div class="filter-input-wrapper">
+                <label for="frame-filter">Filter frames:</label>
+                <input type="text" id="frame-filter" placeholder="Enter text to highlight matching frames...">
+            </div>
+            <button class="export-btn" id="export-btn">Export as JSON</button>
+        </div>
+    </div>
+    <div id="charts"></div>
+
+    <script>
+        let updateInterval = null;
+        let isPaused = false;
+        let activeTab = null;
+        let selectedResourceType = '';
+        let frameFilter = '';
+        let currentGraphs = null;
+
+        function sanitizeId(str) {
+            return str.replace(/[()]/g, '_');
+        }
+
+        function togglePause() {
+            const btn = document.getElementById('pause-btn');
+            const filterContainer = document.getElementById('filter-container');
+            const filterInput = document.getElementById('frame-filter');
+
+            isPaused = !isPaused;
+            if (isPaused) {
+                clearInterval(updateInterval);
+                btn.textContent = 'Resume';
+                filterContainer.classList.add('visible');
+                filterInput.focus();
+            } else {
+                filterContainer.classList.remove('visible');
+                frameFilter = '';
+                filterInput.value = '';
+                updateChart();
+                updateInterval = setInterval(updateChart, 5000);
+                btn.textContent = 'Pause';
+            }
+        }
+
+function applyFrameFilter() {
+            const filterText = document.getElementById('frame-filter').value.toLowerCase();
+            frameFilter = filterText;
+
+            // Get all rect elements (the actual frame rectangles)
+            const rects = document.querySelectorAll('svg rect');
+
+            if (!filterText) {
+                // No filter: remove all dimming and highlight classes from groups
+                document.querySelectorAll('svg g.flame-dimmed, svg g.flame-highlight').forEach(group => {
+                    group.classList.remove('flame-dimmed', 'flame-highlight');
+                });
+            } else {
+                // Filter applied: dim all frames first (apply classes to parent groups)
+                rects.forEach(rect => {
+                    const parent = rect.parentElement;
+                    if (parent && parent.tagName === 'g') {
+                        parent.classList.add('flame-dimmed');
+                    }
+                });
+
+                // Then highlight matching frames
+                rects.forEach(rect => {
+                    let frameText = '';
+
+                    // Get frame name from d3 data
+                    if (rect.__data__ && rect.__data__.data) {
+                        frameText = (rect.__data__.data.name || '').toString().toLowerCase();
+                    }
+
+                    if (frameText && frameText.includes(filterText)) {
+                        const parent = rect.parentElement;
+                        if (parent && parent.tagName === 'g') {
+                            parent.classList.remove('flame-dimmed');
+                            parent.classList.add('flame-highlight');
+                        }
+                    }
+                });
+            }
+        }
+
+        function hasData(root) {
+            return root && root.children && root.children.length > 0;
+        }
+
+        function renderFlamegraph(containerId, data) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
+
+            const width = document.documentElement.clientWidth;
+            const height = Math.max(400, window.innerHeight - 220);
+
+            const fg = flamegraph()
+                .width(width)
+                .height(height);
+
+            const svg = d3.select('#' + containerId).append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            svg.datum(data).call(fg);
+
+            // Reapply frame filter if one is active
+            if (frameFilter) {
+                setTimeout(applyFrameFilter, 0);
+            }
+
+            // Listen for clicks on the flamegraph and reapply filter after interaction
+            svg.on('click', function() {
+                if (frameFilter) {
+                    setTimeout(applyFrameFilter, 50);
+                }
+            });
+        }
+
+        function exportCurrentGraph() {
+            if (!currentGraphs || currentGraphs.length === 0) {
+                alert('No data to export');
+                return;
+            }
+
+            const activeGraph = currentGraphs.find(g => g.type === activeTab);
+            if (!activeGraph) {
+                alert('No data to export');
+                return;
+            }
+
+            const exportData = {
+                type: activeGraph.type,
+                unit: activeGraph.unit || null,
+                data: activeGraph.root,
+                exportedAt: new Date().toISOString(),
+                resourceType: selectedResourceType || 'all'
+            };
+
+            const jsonString = JSON.stringify(exportData, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `flamegraph-${activeGraph.type}-${new Date().getTime()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function updateChart() {
+            const query = selectedResourceType ? '?resourceType=' + encodeURIComponent(selectedResourceType) : '';
+            fetch('/api/flamegraph' + query)
+                .then(r => r.json())
+                .then(graphs => {
+                    currentGraphs = graphs;
+                    // graphs: [{type, unit, root}, ...]
+                    const strip  = document.getElementById('tab-strip');
+                    const charts = document.getElementById('charts');
+
+                    const noData = !graphs || graphs.length === 0 ||
+                                   graphs.every(g => !hasData(g.root));
+
+                    if (noData) {
+                        strip.style.display  = 'none';
+                        charts.innerHTML     =
+                            '<div class="waiting">Waiting for profiles...</div>';
+                        return;
+                    }
+
+                    // Default activeTab to first type on first render
+                    if (activeTab === null || !graphs.find(g => g.type === activeTab)) {
+                        activeTab = graphs[0].type;
+                    }
+
+                    // Rebuild tab strip
+                    strip.style.display = 'flex';
+                    strip.innerHTML = '';
+                    graphs.forEach(g => {
+                        const label = g.unit ? `${g.type} (${g.unit})` : g.type;
+                        const btn   = document.createElement('button');
+                        btn.className  = 'tab-btn' + (g.type === activeTab ? ' active' : '');
+                        btn.textContent = label;
+                        btn.dataset.type = g.type;
+                        btn.addEventListener('click', () => {
+                            activeTab = g.type;
+                            document.querySelectorAll('.tab-btn').forEach(
+                                b => b.classList.toggle('active', b.dataset.type === activeTab)
+                            );
+                            document.querySelectorAll('.tab-panel').forEach(
+                                p => p.classList.toggle('active', p.id === 'panel-' + sanitizeId(activeTab))
+                            );
+                        });
+                        strip.appendChild(btn);
+                    });
+
+                    // Rebuild panels
+                    charts.innerHTML = '';
+                    graphs.forEach(g => {
+                        const panel = document.createElement('div');
+                        const panelId = 'panel-' + sanitizeId(g.type);
+                        panel.className = 'tab-panel' + (g.type === activeTab ? ' active' : '');
+                        panel.id = panelId;
+                        charts.appendChild(panel);
+
+                        if (hasData(g.root)) {
+                            setTimeout(() => renderFlamegraph(panelId, g.root), 0);
+                        } else {
+                            panel.innerHTML = '<div class="waiting">No data for ' +
+                                              g.type + '</div>';
+                        }
+                    });
+
+                    document.getElementById('last-update').textContent =
+                        new Date().toLocaleTimeString();
+                })
+                .catch(err => {
+                    document.getElementById('charts').innerHTML =
+                        '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                });
+
+            // Profile count / time range
+            fetch('/api/profiles')
+                .then(r => r.json())
+                .then(data => {
+                    if (data) {
+                        document.getElementById('profile-count').textContent = data.count || 0;
+                        if (data.timeRange)
+                            document.getElementById('time-range').textContent = data.timeRange;
+                    }
+                })
+                .catch(() => {});
+
+            // Resource types dropdown
+            fetch('/api/resource-types')
+                .then(r => r.json())
+                .then(types => {
+                    if (!types) return;
+                    const select = document.getElementById('resource-select');
+                    const currentValue = select.value;
+                    const existingOptions = Array.from(select.options).slice(1).map(o => o.value);
+                    const newTypes = types || [];
+
+                    // Only update if types have changed
+                    if (existingOptions.length !== newTypes.length ||
+                        !existingOptions.every((v, i) => v === newTypes[i])) {
+                        // Clear existing options except the first "All" option
+                        while (select.options.length > 1) {
+                            select.remove(1);
+                        }
+                        // Add new options
+                        newTypes.forEach(type => {
+                            const option = document.createElement('option');
+                            option.value = type;
+                            option.textContent = type;
+                            select.appendChild(option);
+                        });
+                    }
+
+                    // Restore previous selection if still valid
+                    if (currentValue && Array.from(select.options).some(o => o.value === currentValue)) {
+                        select.value = currentValue;
+                    } else if (currentValue) {
+                        select.value = '';
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function init() {
+            updateChart();
+            updateInterval = setInterval(updateChart, 5000);
+            document.getElementById('pause-btn').addEventListener('click', togglePause);
+            document.getElementById('resource-select').addEventListener('change', (e) => {
+                selectedResourceType = e.target.value;
+                updateChart();
+            });
+            document.getElementById('frame-filter').addEventListener('input', applyFrameFilter);
+            document.getElementById('export-btn').addEventListener('click', exportCurrentGraph);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => setTimeout(init, 500));
+        } else {
+            setTimeout(init, 500);
+        }
+    </script>
+</body>
+</html>
