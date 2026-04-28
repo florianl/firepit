@@ -111,11 +111,11 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-func TestHandleFlameGraph(t *testing.T) {
+func TestHandleFlamegraph(t *testing.T) {
 	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
 	defer st.Close()
 
-	handler := handleFlameGraph(st)
+	handler := handleFlamegraph(st)
 
 	tests := []struct {
 		name       string
@@ -274,6 +274,67 @@ func TestHandleResourceTypes(t *testing.T) {
 				}
 
 				var result map[string]interface{}
+				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+					t.Errorf("response is not valid JSON: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleHeatMap(t *testing.T) {
+	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
+	defer st.Close()
+
+	handler := handleFlamescope(st)
+
+	tests := []struct {
+		name       string
+		method     string
+		query      string
+		statusCode int
+	}{
+		{
+			name:       "GET request",
+			method:     http.MethodGet,
+			query:      "",
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "GET with resourceType filter",
+			method:     http.MethodGet,
+			query:      "?resourceType=myservice",
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "POST not allowed",
+			method:     http.MethodPost,
+			statusCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "PUT not allowed",
+			method:     http.MethodPut,
+			statusCode: http.StatusMethodNotAllowed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/api/heatmap"+tt.query, nil)
+			w := httptest.NewRecorder()
+
+			handler(w, req)
+
+			if w.Code != tt.statusCode {
+				t.Errorf("expected status %d, got %d", tt.statusCode, w.Code)
+			}
+
+			if tt.statusCode == http.StatusOK {
+				if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+					t.Errorf("expected Content-Type application/json, got %s", ct)
+				}
+
+				var result []interface{}
 				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 					t.Errorf("response is not valid JSON: %v", err)
 				}

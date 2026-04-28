@@ -216,7 +216,8 @@ func startWebUIServer(st *store.Store, webAddr string) *http.Server {
 	}
 
 	mux.Handle("/", http.FileServer(http.FS(fsub)))
-	mux.HandleFunc("/api/flamegraph", handleFlameGraph(st))
+	mux.HandleFunc("/api/flamegraph", handleFlamegraph(st))
+	mux.HandleFunc("/api/flamescope", handleFlamescope(st))
 	mux.HandleFunc("/api/profiles", handleProfiles(st))
 	mux.HandleFunc("/api/resource-types", handleResourceTypes(st))
 
@@ -257,7 +258,7 @@ func startOTLPHTTPServer(st *store.Store, cfg Config) *http.Server {
 	return server
 }
 
-func handleFlameGraph(st *store.Store) http.HandlerFunc {
+func handleFlamegraph(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -267,16 +268,39 @@ func handleFlameGraph(st *store.Store) http.HandlerFunc {
 		resourceType := r.URL.Query().Get("resourceType")
 
 		types := st.SampleTypes()
-		graphs := make([]profiler.NamedFlameGraph, 0, len(types))
+		graphs := make([]profiler.NamedFlamegraph, 0, len(types))
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
 			entries = profiler.FilterByResourceType(entries, resourceType)
-			root := profiler.ToFlameGraph(entries)
-			graphs = append(graphs, profiler.NamedFlameGraph{Type: t, Root: root})
+			root := profiler.ToFlamegraph(entries)
+			graphs = append(graphs, profiler.NamedFlamegraph{Type: t, Root: root})
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(graphs)
+	}
+}
+
+func handleFlamescope(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		resourceType := r.URL.Query().Get("resourceType")
+
+		types := st.SampleTypes()
+		maps := make([]profiler.NamedFlamescope, 0, len(types))
+		for _, t := range types {
+			entries := st.ProfileEntries(t)
+			entries = profiler.FilterByResourceType(entries, resourceType)
+			hm := profiler.ToHeatMap(entries)
+			maps = append(maps, profiler.NamedFlamescope{Type: t, Data: hm})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(maps)
 	}
 }
 
