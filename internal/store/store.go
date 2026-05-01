@@ -121,7 +121,8 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 					Profile:    profile,
 					Dictionary: dictionary,
 					Attributes: attributes,
-					Size:       int64(proto.Size(profile)),
+					// Include the size of the dictionary proportionally
+					Size: int64(proto.Size(profile) + proto.Size(dictionary)/len(sp.Profiles)),
 				}
 				s.entries[key] = append(s.entries[key], entry)
 				s.totalBytes += entry.Size
