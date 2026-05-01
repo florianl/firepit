@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -32,13 +33,14 @@ var webFS embed.FS
 
 // Config holds the configuration for firepit
 type Config struct {
-	GRPCAddr        string
-	HTTPAddr        string
-	WebAddr         string
-	ProfileTTL      time.Duration
-	CleanupInterval time.Duration
-	MaxBodySize     int64
-	MaxStorageBytes int64
+	GRPCAddr         string
+	HTTPAddr         string
+	WebAddr          string
+	ProfileTTL       time.Duration
+	CleanupInterval  time.Duration
+	MaxBodySize      int64
+	MaxStorageBytes  int64
+	RuntimeProfiling bool
 }
 
 // loadConfig loads configuration from environment variables and command-line flags
@@ -53,6 +55,7 @@ func loadConfig() Config {
 	flag.DurationVar(&cfg.CleanupInterval, "cleanup-interval", cfg.CleanupInterval, "Cleanup interval")
 	flag.Int64Var(&cfg.MaxBodySize, "max-body-size", cfg.MaxBodySize, "Maximum request body size in bytes")
 	flag.Int64Var(&cfg.MaxStorageBytes, "max-storage-bytes", cfg.MaxStorageBytes, "Maximum total profile storage in bytes (0 = unlimited)")
+	flag.BoolVar(&cfg.RuntimeProfiling, "pprof", false, "Serve runtime profiling data via http")
 	flag.Parse()
 
 	return cfg
@@ -152,7 +155,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		webServer = startWebUIServer(st, cfg.WebAddr)
+		webServer = startWebUIServer(st, cfg.WebAddr, cfg.RuntimeProfiling)
 	}()
 
 	<-ctx.Done()
@@ -206,7 +209,7 @@ func startGRPCServer(st *store.Store, grpcAddr string) *grpc.Server {
 	return grpcServer
 }
 
-func startWebUIServer(st *store.Store, webAddr string) *http.Server {
+func startWebUIServer(st *store.Store, webAddr string, runtimeProfiling bool) *http.Server {
 	mux := http.NewServeMux()
 
 	fsub, err := fs.Sub(webFS, "web")
@@ -220,6 +223,14 @@ func startWebUIServer(st *store.Store, webAddr string) *http.Server {
 	mux.HandleFunc("/api/flamescope", handleFlamescope(st))
 	mux.HandleFunc("/api/profiles", handleProfiles(st))
 	mux.HandleFunc("/api/resource-types", handleResourceTypes(st))
+
+	if runtimeProfiling {
+		mux.HandleFunc("/debug/pprof", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
 
 	server := &http.Server{
 		Addr:    webAddr,
