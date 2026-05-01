@@ -93,11 +93,14 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 		Children: []*FlameNode{},
 	}
 
+	// Cache resolved stacks to avoid re-resolving identical stacks
+	stackCache := make(map[int32][]string)
+
 	profileCount := 0
 	for _, entry := range entries {
 		if entry.Profile != nil && entry.Dictionary != nil {
 			profileCount++
-			processProfile(root, entry.Profile, entry.Dictionary)
+			processProfile(root, entry.Profile, entry.Dictionary, stackCache)
 		}
 	}
 
@@ -108,7 +111,7 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 	return root
 }
 
-func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary) {
+func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, stackCache map[int32][]string) {
 	if profile == nil || len(profile.Samples) == 0 {
 		return
 	}
@@ -133,7 +136,7 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 			continue
 		}
 
-		stack := resolveStack(sample, dict)
+		stack := resolveStack(sample, dict, stackCache)
 		if len(stack) == 0 {
 			continue
 		}
@@ -143,16 +146,22 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 	}
 }
 
-func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary) []string {
+func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, stackCache map[int32][]string) []string {
 	var stack []string
 
 	if dict == nil {
 		return stack
 	}
 
+	// Check if this stack is already resolved
+	if cached, ok := stackCache[sample.StackIndex]; ok {
+		return cached
+	}
+
 	// Get the stack from the dictionary using the stack_index
 	stackEntry := stackTableLookup(dict, sample.StackIndex)
 	if stackEntry == nil {
+		stackCache[sample.StackIndex] = stack
 		return stack
 	}
 
@@ -189,6 +198,9 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 
 	// location_indices are leaf-first; reverse to get root-to-leaf order for the flame graph
 	slices.Reverse(stack)
+
+	// Cache the resolved stack
+	stackCache[sample.StackIndex] = stack
 
 	return stack
 }
