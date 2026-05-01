@@ -2,9 +2,9 @@
 package profiler
 
 import (
-	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/florianl/firepit/internal/store"
@@ -165,7 +165,7 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 
 		if len(loc.Lines) == 0 {
 			// Location has no line info; use address as fallback
-			stack = append(stack, fmt.Sprintf("[0x%x]", loc.Address))
+			stack = append(stack, "[0x"+strconv.FormatUint(loc.Address, 16)+"]")
 			continue
 		}
 
