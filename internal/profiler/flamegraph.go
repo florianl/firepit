@@ -12,9 +12,10 @@ import (
 )
 
 type FlameNode struct {
-	Name     string       `json:"name"`
-	Value    int64        `json:"value"`
-	Children []*FlameNode `json:"children,omitempty"`
+	Name        string                `json:"name"`
+	Value       int64                 `json:"value"`
+	Children    []*FlameNode          `json:"children,omitempty"`
+	childrenMap map[string]*FlameNode `json:"-`
 }
 
 type NamedFlamegraph struct {
@@ -88,9 +89,10 @@ func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []s
 
 func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 	root := &FlameNode{
-		Name:     "root",
-		Value:    0,
-		Children: []*FlameNode{},
+		Name:        "root",
+		Value:       0,
+		Children:    []*FlameNode{},
+		childrenMap: make(map[string]*FlameNode),
 	}
 
 	// Cache resolved stacks to avoid re-resolving identical stacks
@@ -210,21 +212,16 @@ func insertStack(root *FlameNode, stack []string, value int64) {
 	root.Value += value
 
 	for _, name := range stack {
-		var child *FlameNode
-		for _, c := range current.Children {
-			if c.Name == name {
-				child = c
-				break
-			}
-		}
-
-		if child == nil {
+		child, exists := current.childrenMap[name]
+		if !exists {
 			child = &FlameNode{
-				Name:     name,
-				Value:    0,
-				Children: []*FlameNode{},
+				Name:        name,
+				Value:       0,
+				Children:    []*FlameNode{},
+				childrenMap: make(map[string]*FlameNode),
 			}
 			current.Children = append(current.Children, child)
+			current.childrenMap[name] = child
 		}
 
 		child.Value += value
