@@ -35,6 +35,7 @@ func stringTableLookup(st []string, idx int32) string {
 type Store struct {
 	mu              sync.RWMutex
 	entries         map[string][]ProfileEntry // sample type → profile entries
+	resourceTypes   []string
 	maxAge          time.Duration
 	cleanupInterval time.Duration
 	maxMemory       int64 // 0 = unlimited
@@ -67,6 +68,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	defer s.mu.Unlock()
 
 	st := dictionary.StringTable
+	seenResourceTypes := make(map[string]bool)
 
 	for _, rp := range resourceProfiles {
 		if rp == nil {
@@ -77,6 +79,15 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 		var attributes []*commonpb.KeyValue
 		if rp.Resource != nil {
 			attributes = rp.Resource.Attributes
+
+			// Cache resource attributes for the filtering
+			for _, attr := range attributes {
+				if attr.Value != nil {
+					if strVal := attr.Value.GetStringValue(); strVal != "" {
+						seenResourceTypes[attr.Key+":"+strVal] = true
+					}
+				}
+			}
 		}
 
 		for _, sp := range rp.ScopeProfiles {
@@ -117,6 +128,11 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 			}
 		}
 	}
+
+	resAttrs := slices.Sorted(maps.Keys(seenResourceTypes))
+	s.resourceTypes = append(s.resourceTypes, resAttrs...)
+	slices.Sort(s.resourceTypes)
+	s.resourceTypes = slices.Compact(s.resourceTypes)
 }
 
 func (s *Store) SampleTypes() []string {
@@ -139,23 +155,7 @@ func (s *Store) ResourceTypes() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	seen := make(map[string]bool)
-	for _, entries := range s.entries {
-		for _, entry := range entries {
-			if entry.Attributes == nil {
-				continue
-			}
-			for _, attr := range entry.Attributes {
-				if attr.Value != nil {
-					if strVal := attr.Value.GetStringValue(); strVal != "" {
-						seen[attr.Key+":"+strVal] = true
-					}
-				}
-			}
-		}
-	}
-
-	return slices.Sorted(maps.Keys(seen))
+	return s.resourceTypes
 }
 
 func (s *Store) Stats() (count int, minTime, maxTime time.Time, ok bool) {
