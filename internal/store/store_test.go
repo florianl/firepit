@@ -31,7 +31,8 @@ func TestAddAndRetrieve(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp := &profilespb.ResourceProfiles{
@@ -94,7 +95,8 @@ func TestResourceTypes(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp := &profilespb.ResourceProfiles{
@@ -156,7 +158,8 @@ func TestStats(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp := &profilespb.ResourceProfiles{
@@ -209,7 +212,8 @@ func TestCloseStore(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp := &profilespb.ResourceProfiles{
@@ -239,7 +243,8 @@ func TestAddMultipleProfiles(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	profile2 := &profilespb.Profile{
@@ -247,7 +252,8 @@ func TestAddMultipleProfiles(t *testing.T) {
 			TypeStrindex: 3,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp := &profilespb.ResourceProfiles{
@@ -279,7 +285,8 @@ func TestNilResourceAttributes(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp := &profilespb.ResourceProfiles{
@@ -317,7 +324,8 @@ func TestMemoryLimitEviction(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	profile2 := &profilespb.Profile{
@@ -325,7 +333,8 @@ func TestMemoryLimitEviction(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp1 := &profilespb.ResourceProfiles{
@@ -373,7 +382,8 @@ func TestMemoryLimitDisabled(t *testing.T) {
 			TypeStrindex: 1,
 			UnitStrindex: 2,
 		},
-		Samples: []*profilespb.Sample{},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
 	}
 
 	rp := &profilespb.ResourceProfiles{
