@@ -15,7 +15,7 @@ import (
 )
 
 type ProfileEntry struct {
-	ReceivedAt time.Time
+	CreatedAt  time.Time
 	Profile    *profilespb.Profile
 	Dictionary *profilespb.ProfilesDictionary
 	Attributes []*commonpb.KeyValue
@@ -66,7 +66,6 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now()
 	st := dictionary.StringTable
 
 	for _, rp := range resourceProfiles {
@@ -107,7 +106,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 				}
 
 				entry := ProfileEntry{
-					ReceivedAt: now,
+					CreatedAt:  time.Unix(0, int64(profile.TimeUnixNano)),
 					Profile:    profile,
 					Dictionary: dictionary,
 					Attributes: attributes,
@@ -166,16 +165,16 @@ func (s *Store) Stats() (count int, minTime, maxTime time.Time, ok bool) {
 	for _, entries := range s.entries {
 		count += len(entries)
 		for _, e := range entries {
-			if !ok || e.ReceivedAt.Before(minTime) {
-				minTime = e.ReceivedAt
+			if !ok || e.CreatedAt.Before(minTime) {
+				minTime = e.CreatedAt
 			}
-			if !ok || e.ReceivedAt.After(maxTime) {
-				maxTime = e.ReceivedAt
+			if !ok || e.CreatedAt.After(maxTime) {
+				maxTime = e.CreatedAt
 			}
 			ok = true
 		}
 	}
-	return
+	return count, minTime, maxTime, ok
 }
 
 func (s *Store) cleanupLoop() {
@@ -198,7 +197,7 @@ func (s *Store) cleanup() {
 	for typeStr, entries := range s.entries {
 		var kept []ProfileEntry
 		for _, entry := range entries {
-			if now.Sub(entry.ReceivedAt) < s.maxAge {
+			if now.Sub(entry.CreatedAt) < s.maxAge {
 				kept = append(kept, entry)
 			} else {
 				s.totalBytes -= entry.Size
@@ -228,7 +227,7 @@ func (s *Store) evictOldest() {
 		}
 	}
 	sort.Slice(all, func(i, j int) bool {
-		return all[i].entry.ReceivedAt.Before(all[j].entry.ReceivedAt)
+		return all[i].entry.CreatedAt.Before(all[j].entry.CreatedAt)
 	})
 
 	dropped := 0
@@ -238,7 +237,7 @@ func (s *Store) evictOldest() {
 		}
 		entries := s.entries[item.typeStr]
 		for i, e := range entries {
-			if e.ReceivedAt.Equal(item.entry.ReceivedAt) && e.Size == item.entry.Size {
+			if e.CreatedAt.Equal(item.entry.CreatedAt) && e.Size == item.entry.Size {
 				s.entries[item.typeStr] = append(entries[:i], entries[i+1:]...)
 				break
 			}
