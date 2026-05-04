@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>firepit - OTel Profile Visualizer</title>
+    <script>window.__BASE_PATH__ = '{{.BasePath}}';</script>
     <script src="d3.v7.min.js"></script>
     <script src="d3-flamegraph.min.js"></script>
     <link rel="stylesheet" href="d3-flamegraph.css">
@@ -470,7 +471,7 @@ function applyFrameFilter() {
             }
 
             // Profile count / time range
-            fetch('/api/profiles')
+            fetch(window.__BASE_PATH__ + '/api/profiles')
                 .then(r => r.json())
                 .then(data => {
                     if (data) {
@@ -482,7 +483,7 @@ function applyFrameFilter() {
                 .catch(() => {});
 
             // Resource types dropdown
-            fetch('/api/resource-types')
+            fetch(window.__BASE_PATH__ + '/api/resource-types')
                 .then(r => r.json())
                 .then(types => {
                     if (!types) return;
@@ -518,7 +519,7 @@ function applyFrameFilter() {
         }
 
         function fetchAndRenderFlamegraph(query) {
-            fetch('/api/flamegraph' + query)
+            fetch(window.__BASE_PATH__ + '/api/flamegraph' + query)
                 .then(r => r.json())
                 .then(graphs => {
                     currentGraphs = graphs;
@@ -592,7 +593,7 @@ function applyFrameFilter() {
         }
 
         function fetchAndRenderHeatMap(query) {
-            fetch('/api/flamescope' + query)
+            fetch(window.__BASE_PATH__ + '/api/flamescope' + query)
                 .then(r => r.json())
                 .then(hmaps => {
                     currentHeatMaps = hmaps;

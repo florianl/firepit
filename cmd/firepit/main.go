@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -36,6 +38,7 @@ type Config struct {
 	GRPCAddr         string
 	HTTPAddr         string
 	WebAddr          string
+	BasePath         string
 	ProfileTTL       time.Duration
 	CleanupInterval  time.Duration
 	MaxBodySize      int64
@@ -51,6 +54,7 @@ func loadConfig() Config {
 	flag.StringVar(&cfg.GRPCAddr, "grpc-addr", cfg.GRPCAddr, "gRPC server address")
 	flag.StringVar(&cfg.HTTPAddr, "http-addr", cfg.HTTPAddr, "HTTP/OTLP server address")
 	flag.StringVar(&cfg.WebAddr, "web-addr", cfg.WebAddr, "Web UI server address")
+	flag.StringVar(&cfg.BasePath, "base-path", cfg.BasePath, "Base path prefix for the web UI (e.g. /firepit)")
 	flag.DurationVar(&cfg.ProfileTTL, "profile-ttl", cfg.ProfileTTL, "Profile retention TTL")
 	flag.DurationVar(&cfg.CleanupInterval, "cleanup-interval", cfg.CleanupInterval, "Cleanup interval")
 	flag.Int64Var(&cfg.MaxBodySize, "max-body-size", cfg.MaxBodySize, "Maximum request body size in bytes")
@@ -58,7 +62,17 @@ func loadConfig() Config {
 	flag.BoolVar(&cfg.RuntimeProfiling, "pprof", false, "Serve runtime profiling data via http")
 	flag.Parse()
 
+	cfg.BasePath = normalizeBasePath(cfg.BasePath)
 	return cfg
+}
+
+// normalizeBasePath ensures the base path has a leading slash and no trailing slash.
+func normalizeBasePath(p string) string {
+	p = strings.TrimRight(p, "/")
+	if p != "" && !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return p
 }
 
 // loadConfigFromEnv loads configuration from environment variables
@@ -116,6 +130,10 @@ func loadConfigFromEnv(getenv func(string) string) Config {
 		}
 	}
 
+	if bp := getenv("BASE_PATH"); bp != "" {
+		cfg.BasePath = normalizeBasePath(bp)
+	}
+
 	return cfg
 }
 
@@ -129,8 +147,9 @@ func main() {
 	defer cancel()
 
 	slog.Info("Configuration loaded", "grpc_addr", cfg.GRPCAddr, "http_addr", cfg.HTTPAddr,
-		"web_addr", cfg.WebAddr, "profile_ttl", cfg.ProfileTTL, "cleanup_interval",
-		cfg.CleanupInterval, "max_body_size", cfg.MaxBodySize, "max_storage_bytes", cfg.MaxStorageBytes)
+		"web_addr", cfg.WebAddr, "base_path", cfg.BasePath, "profile_ttl", cfg.ProfileTTL,
+		"cleanup_interval", cfg.CleanupInterval, "max_body_size", cfg.MaxBodySize,
+		"max_storage_bytes", cfg.MaxStorageBytes)
 
 	var wg sync.WaitGroup
 	var grpcServer *grpc.Server
@@ -155,7 +174,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		webServer = startWebUIServer(st, cfg.WebAddr, cfg.RuntimeProfiling)
+		webServer = startWebUIServer(st, cfg)
 	}()
 
 	<-ctx.Done()
@@ -209,8 +228,9 @@ func startGRPCServer(st *store.Store, grpcAddr string) *grpc.Server {
 	return grpcServer
 }
 
-func startWebUIServer(st *store.Store, webAddr string, runtimeProfiling bool) *http.Server {
+func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 	mux := http.NewServeMux()
+	base := cfg.BasePath
 
 	fsub, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -218,27 +238,57 @@ func startWebUIServer(st *store.Store, webAddr string, runtimeProfiling bool) *h
 		os.Exit(1)
 	}
 
-	mux.Handle("/", http.FileServer(http.FS(fsub)))
-	mux.HandleFunc("/api/flamegraph", handleFlamegraph(st))
-	mux.HandleFunc("/api/flamescope", handleFlamescope(st))
-	mux.HandleFunc("/api/profiles", handleProfiles(st))
-	mux.HandleFunc("/api/resource-types", handleResourceTypes(st))
-
-	if runtimeProfiling {
-		mux.HandleFunc("/debug/pprof", pprof.Index)
-		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	tmpl, err := template.ParseFS(webFS, "web/index.html")
+	if err != nil {
+		slog.Error("Failed to parse index template", "error", err)
+		os.Exit(1)
 	}
 
+	strippedFileServer := http.StripPrefix(base, http.FileServer(http.FS(fsub)))
+
+	mux.Handle(base+"/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stripped := strings.TrimPrefix(r.URL.Path, base)
+		if stripped == "/" || stripped == "" || stripped == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := tmpl.Execute(w, struct{ BasePath string }{cfg.BasePath}); err != nil {
+				slog.Error("failed to render index template", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+			return
+		}
+		strippedFileServer.ServeHTTP(w, r)
+	}))
+
+	mux.HandleFunc(base+"/api/flamegraph", handleFlamegraph(st))
+	mux.HandleFunc(base+"/api/flamescope", handleFlamescope(st))
+	mux.HandleFunc(base+"/api/profiles", handleProfiles(st))
+	mux.HandleFunc(base+"/api/resource-types", handleResourceTypes(st))
+
+	if cfg.RuntimeProfiling {
+		mux.HandleFunc(base+"/debug/pprof", pprof.Index)
+		mux.HandleFunc(base+"/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc(base+"/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc(base+"/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc(base+"/debug/pprof/trace", pprof.Trace)
+	}
+
+	if base != "" {
+		mux.Handle("/", http.RedirectHandler(base+"/", http.StatusMovedPermanently))
+	}
+
+	return mux
+}
+
+func startWebUIServer(st *store.Store, cfg Config) *http.Server {
+	mux := buildWebUIMux(st, cfg)
+
 	server := &http.Server{
-		Addr:    webAddr,
+		Addr:    cfg.WebAddr,
 		Handler: mux,
 	}
 
-	slog.Info("Web UI listening", "addr", webAddr)
-	slog.Info("Open browser to", "url", "http://localhost"+webAddr)
+	slog.Info("Web UI listening", "addr", cfg.WebAddr)
+	slog.Info("Open browser to", "url", "http://localhost"+cfg.WebAddr+cfg.BasePath)
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
