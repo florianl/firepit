@@ -24,7 +24,7 @@ docker run -it --rm \
 	-p 4318:4318 \
 	-p 8080:8080 \
 	firepit
-2026/04/28 06:19:26 INFO Configuration loaded grpc_addr=:4317 http_addr=:4318 web_addr=:8080 profile_ttl=5m0s cleanup_interval=30s max_body_size=33554432 max_storage_bytes=524288000
+2026/04/28 06:19:26 INFO Configuration loaded grpc_addr=:4317 http_addr=:4318 web_addr=:8080 base_path="" profile_ttl=5m0s cleanup_interval=30s max_body_size=33554432 max_storage_bytes=524288000
 2026/04/28 06:19:26 INFO OTLP HTTP server listening addr=:4318
 2026/04/28 06:19:26 INFO Web UI listening addr=:8080
 2026/04/28 06:19:26 INFO Open browser to url=http://localhost:8080
@@ -40,7 +40,7 @@ receivers:
   profiling: {}
 
 exporters:
-  otlp/firepit:
+  otlp_grpc/firepit:
     endpoint: 127.0.0.1:4317
     tls:
       insecure: true
@@ -50,7 +50,7 @@ service:
   pipelines:
     profiles:
       receivers: [profiling]
-      exporters: [otlp/firepit]
+      exporters: [otlp_grpc/firepit]
 ```
 
 ## ⚠️ Development and Demo Use Only

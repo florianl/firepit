@@ -111,6 +111,119 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+func TestNormalizeBasePath(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"/", ""},
+		{"/firepit", "/firepit"},
+		{"/firepit/", "/firepit"},
+		{"firepit", "/firepit"},
+		{"firepit/", "/firepit"},
+	}
+	for _, tt := range tests {
+		if got := normalizeBasePath(tt.input); got != tt.want {
+			t.Errorf("normalizeBasePath(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestLoadConfigBasePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		wantPath string
+	}{
+		{"empty", map[string]string{}, ""},
+		{"set with leading slash", map[string]string{"BASE_PATH": "/firepit"}, "/firepit"},
+		{"set without leading slash", map[string]string{"BASE_PATH": "firepit"}, "/firepit"},
+		{"set with trailing slash", map[string]string{"BASE_PATH": "/firepit/"}, "/firepit"},
+		{"root slash only", map[string]string{"BASE_PATH": "/"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := loadConfigFromEnv(func(key string) string { return tt.env[key] })
+			if cfg.BasePath != tt.wantPath {
+				t.Errorf("BasePath = %q, want %q", cfg.BasePath, tt.wantPath)
+			}
+		})
+	}
+}
+
+func TestWebUIServerBasePath(t *testing.T) {
+	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
+	defer st.Close()
+
+	tests := []struct {
+		name         string
+		basePath     string
+		requestPath  string
+		wantStatus   int
+		wantLocation string
+	}{
+		{
+			name:        "no base path: root returns 200",
+			basePath:    "",
+			requestPath: "/",
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "no base path: api route returns 200",
+			basePath:    "",
+			requestPath: "/api/profiles",
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:         "base path: root redirects to base",
+			basePath:     "/firepit",
+			requestPath:  "/",
+			wantStatus:   http.StatusMovedPermanently,
+			wantLocation: "/firepit/",
+		},
+		{
+			name:        "base path: prefixed root returns 200",
+			basePath:    "/firepit",
+			requestPath: "/firepit/",
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "base path: prefixed api route returns 200",
+			basePath:    "/firepit",
+			requestPath: "/firepit/api/profiles",
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:         "base path: unprefixed api route redirects",
+			basePath:     "/firepit",
+			requestPath:  "/api/profiles",
+			wantStatus:   http.StatusMovedPermanently,
+			wantLocation: "/firepit/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{BasePath: tt.basePath}
+			mux := buildWebUIMux(st, cfg)
+
+			req := httptest.NewRequest(http.MethodGet, tt.requestPath, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+			if tt.wantLocation != "" {
+				if loc := w.Header().Get("Location"); loc != tt.wantLocation {
+					t.Errorf("Location = %q, want %q", loc, tt.wantLocation)
+				}
+			}
+		})
+	}
+}
+
 func TestHandleFlamegraph(t *testing.T) {
 	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
 	defer st.Close()
