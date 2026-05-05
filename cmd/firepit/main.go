@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -238,11 +237,12 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 		os.Exit(1)
 	}
 
-	tmpl, err := template.ParseFS(webFS, "web/index.html")
+	indexBytes, err := webFS.ReadFile("web/index.html")
 	if err != nil {
-		slog.Error("Failed to parse index template", "error", err)
+		slog.Error("Failed to read index.html", "error", err)
 		os.Exit(1)
 	}
+	indexHTML := strings.ReplaceAll(string(indexBytes), "__BASE_PATH__", cfg.BasePath)
 
 	strippedFileServer := http.StripPrefix(base, http.FileServer(http.FS(fsub)))
 
@@ -250,10 +250,7 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 		stripped := strings.TrimPrefix(r.URL.Path, base)
 		if stripped == "/" || stripped == "" || stripped == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if err := tmpl.Execute(w, struct{ BasePath string }{cfg.BasePath}); err != nil {
-				slog.Error("failed to render index template", "error", err)
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-			}
+			fmt.Fprint(w, indexHTML)
 			return
 		}
 		strippedFileServer.ServeHTTP(w, r)
