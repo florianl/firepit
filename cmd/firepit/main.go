@@ -242,7 +242,7 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 		slog.Error("Failed to read index.html", "error", err)
 		os.Exit(1)
 	}
-	indexHTML := strings.ReplaceAll(string(indexBytes), "__BASE_PATH__", cfg.BasePath)
+	indexHTML := strings.ReplaceAll(string(indexBytes), "FIREPIT_BASE_PATH", cfg.BasePath)
 
 	strippedFileServer := http.StripPrefix(base, http.FileServer(http.FS(fsub)))
 
