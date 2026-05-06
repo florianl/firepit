@@ -13,6 +13,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,12 @@ import (
 
 //go:embed web
 var webFS embed.FS
+
+// validBasePathRE allows only characters that are safe in a URL path and in a JS
+// single-quoted string literal.
+var validBasePathRE = regexp.MustCompile(validBasePathChars)
+
+const validBasePathChars = `^[/a-zA-Z0-9\-_.~]*$`
 
 // Config holds the configuration for firepit
 type Config struct {
@@ -61,17 +68,28 @@ func loadConfig() Config {
 	flag.BoolVar(&cfg.RuntimeProfiling, "pprof", false, "Serve runtime profiling data via http")
 	flag.Parse()
 
-	cfg.BasePath = normalizeBasePath(cfg.BasePath)
+	bp, err := normalizeBasePath(cfg.BasePath)
+	if err != nil {
+		slog.Error("Invalid base path", "error", err)
+		os.Exit(1)
+	}
+	cfg.BasePath = bp
 	return cfg
 }
 
 // normalizeBasePath ensures the base path has a leading slash and no trailing slash.
-func normalizeBasePath(p string) string {
+// It rejects any input not matching the regex validBasePathChars to prevent
+// injection into the JS string literal in index.html.
+func normalizeBasePath(p string) (string, error) {
 	p = strings.TrimRight(p, "/")
 	if p != "" && !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
-	return p
+	if p != "" && !validBasePathRE.MatchString(p) {
+		return "", fmt.Errorf("base path %q contains characters not matching the regex %s",
+			p, validBasePathChars)
+	}
+	return p, nil
 }
 
 // loadConfigFromEnv loads configuration from environment variables
@@ -130,7 +148,12 @@ func loadConfigFromEnv(getenv func(string) string) Config {
 	}
 
 	if bp := getenv("BASE_PATH"); bp != "" {
-		cfg.BasePath = normalizeBasePath(bp)
+		normalized, err := normalizeBasePath(bp)
+		if err != nil {
+			slog.Warn("Invalid BASE_PATH, using empty base path", "error", err)
+		} else {
+			cfg.BasePath = normalized
+		}
 	}
 
 	return cfg
