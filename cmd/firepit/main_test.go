@@ -112,7 +112,7 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestNormalizeBasePath(t *testing.T) {
-	tests := []struct {
+	valid := []struct {
 		input string
 		want  string
 	}{
@@ -122,10 +122,32 @@ func TestNormalizeBasePath(t *testing.T) {
 		{"/firepit/", "/firepit"},
 		{"firepit", "/firepit"},
 		{"firepit/", "/firepit"},
+		{"/my-app_v1.0~beta", "/my-app_v1.0~beta"},
 	}
-	for _, tt := range tests {
-		if got := normalizeBasePath(tt.input); got != tt.want {
+	for _, tt := range valid {
+		got, err := normalizeBasePath(tt.input)
+		if err != nil {
+			t.Errorf("normalizeBasePath(%q) unexpected error: %v", tt.input, err)
+		} else if got != tt.want {
 			t.Errorf("normalizeBasePath(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+
+	invalid := []string{
+		"/path'injection",
+		`/path\injection`,
+		"/path<script>",
+		"/path>foo",
+		`/path"foo`,
+		"/path\nfoo",
+		"/path foo",
+		"/path;foo",
+		"/path%2F",
+	}
+	for _, input := range invalid {
+		_, err := normalizeBasePath(input)
+		if err == nil {
+			t.Errorf("normalizeBasePath(%q) expected error but got none", input)
 		}
 	}
 }
@@ -141,6 +163,7 @@ func TestLoadConfigBasePath(t *testing.T) {
 		{"set without leading slash", map[string]string{"BASE_PATH": "firepit"}, "/firepit"},
 		{"set with trailing slash", map[string]string{"BASE_PATH": "/firepit/"}, "/firepit"},
 		{"root slash only", map[string]string{"BASE_PATH": "/"}, ""},
+		{"invalid chars fallback to empty", map[string]string{"BASE_PATH": "/fire'pit"}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
