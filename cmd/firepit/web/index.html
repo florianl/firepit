@@ -148,6 +148,10 @@
         .resource-filter select:hover {
             background-color: rgba(255, 255, 255, 0.15);
         }
+        .resource-filter select:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .filter-container {
             max-height: 0;
             overflow: hidden;
@@ -278,9 +282,12 @@
                     </select>
                 </div>
                 <div class="resource-filter">
-                    <label for="resource-select">Filter:</label>
-                    <select id="resource-select">
+                    <label for="resource-key-select">Filter:</label>
+                    <select id="resource-key-select">
                         <option value="">All</option>
+                    </select>
+                    <select id="resource-value-select" disabled>
+                        <option value="">(select attribute)</option>
                     </select>
                 </div>
             </div>
@@ -310,10 +317,56 @@
         let isPaused = false;
         let activeTab = null;
         let selectedResourceType = '';
+        let selectedAttrKey = '';
+        let selectedAttrValue = '';
+        let resourceTypeMap = {};
+        let lastResourceTypesKey = '';
         let frameFilter = '';
         let currentGraphs = null;
         let viewMode = 'flamegraph';
         let currentHeatMaps = null;
+
+        function applyResourceFilter() {
+            selectedResourceType = (selectedAttrKey && selectedAttrValue)
+                ? selectedAttrKey + ':' + selectedAttrValue
+                : '';
+        }
+
+        function rebuildValueSelect() {
+            const valueSelect = document.getElementById('resource-value-select');
+            valueSelect.innerHTML = '';
+
+            if (!selectedAttrKey) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '(select attribute)';
+                valueSelect.appendChild(opt);
+                valueSelect.disabled = true;
+                selectedAttrValue = '';
+                return;
+            }
+
+            valueSelect.disabled = false;
+            const allOpt = document.createElement('option');
+            allOpt.value = '';
+            allOpt.textContent = 'All values';
+            valueSelect.appendChild(allOpt);
+
+            const values = resourceTypeMap[selectedAttrKey] || [];
+            values.forEach(v => {
+                const o = document.createElement('option');
+                o.value = v;
+                o.textContent = v;
+                valueSelect.appendChild(o);
+            });
+
+            if (selectedAttrValue && values.includes(selectedAttrValue)) {
+                valueSelect.value = selectedAttrValue;
+            } else {
+                selectedAttrValue = '';
+                valueSelect.value = '';
+            }
+        }
 
         function sanitizeId(str) {
             return str.replace(/[()]/g, '_');
@@ -482,38 +535,50 @@ function applyFrameFilter() {
                 })
                 .catch(() => {});
 
-            // Resource types dropdown
+            // Resource types: cascading key → value selects
             fetch(window.__BASE_PATH__ + '/api/resource-types')
                 .then(r => r.json())
                 .then(types => {
                     if (!types) return;
-                    const select = document.getElementById('resource-select');
-                    const currentValue = select.value;
-                    const existingOptions = Array.from(select.options).slice(1).map(o => o.value);
                     const newTypes = types || [];
+                    const newKey = JSON.stringify(newTypes);
+                    if (newKey === lastResourceTypesKey) return;
+                    lastResourceTypesKey = newKey;
 
-                    // Only update if types have changed
-                    if (existingOptions.length !== newTypes.length ||
-                        !existingOptions.every((v, i) => v === newTypes[i])) {
-                        // Clear existing options except the first "All" option
-                        while (select.options.length > 1) {
-                            select.remove(1);
-                        }
-                        // Add new options
-                        newTypes.forEach(type => {
-                            const option = document.createElement('option');
-                            option.value = type;
-                            option.textContent = type;
-                            select.appendChild(option);
-                        });
-                    }
+                    // Group "key:value" strings into { key: [values] }
+                    const newMap = {};
+                    newTypes.forEach(t => {
+                        const idx = t.indexOf(':');
+                        if (idx === -1) return;
+                        const k = t.slice(0, idx);
+                        const v = t.slice(idx + 1);
+                        if (!newMap[k]) newMap[k] = [];
+                        newMap[k].push(v);
+                    });
+                    resourceTypeMap = newMap;
 
-                    // Restore previous selection if still valid
-                    if (currentValue && Array.from(select.options).some(o => o.value === currentValue)) {
-                        select.value = currentValue;
-                    } else if (currentValue) {
-                        select.value = '';
+                    const keySelect = document.getElementById('resource-key-select');
+                    keySelect.innerHTML = '';
+                    const allOpt = document.createElement('option');
+                    allOpt.value = '';
+                    allOpt.textContent = 'All';
+                    keySelect.appendChild(allOpt);
+                    Object.keys(newMap).sort().forEach(k => {
+                        const o = document.createElement('option');
+                        o.value = k;
+                        o.textContent = k;
+                        keySelect.appendChild(o);
+                    });
+
+                    if (selectedAttrKey && newMap[selectedAttrKey]) {
+                        keySelect.value = selectedAttrKey;
+                    } else {
+                        selectedAttrKey = '';
+                        selectedAttrValue = '';
+                        keySelect.value = '';
                     }
+                    rebuildValueSelect();
+                    applyResourceFilter();
                 })
                 .catch(() => {});
         }
@@ -800,8 +865,16 @@ function applyFrameFilter() {
             document.getElementById('view-select').addEventListener('change', (e) => {
                 onViewModeChange(e.target.value);
             });
-            document.getElementById('resource-select').addEventListener('change', (e) => {
-                selectedResourceType = e.target.value;
+            document.getElementById('resource-key-select').addEventListener('change', (e) => {
+                selectedAttrKey = e.target.value;
+                selectedAttrValue = '';
+                rebuildValueSelect();
+                applyResourceFilter();
+                updateChart();
+            });
+            document.getElementById('resource-value-select').addEventListener('change', (e) => {
+                selectedAttrValue = e.target.value;
+                applyResourceFilter();
                 updateChart();
             });
             document.getElementById('frame-filter').addEventListener('input', applyFrameFilter);
