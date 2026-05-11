@@ -23,6 +23,7 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           cache-dependency-path: go.sum
+          check-latest: true
       - name: test
         run: |
           make test
@@ -48,3 +49,4 @@ jobs:
         run: |
           make fmt
           git diff --exit-code
+
