@@ -37,10 +37,11 @@ jobs:
             echo "Issue #$EXISTING already exists, skipping."
             exit 0
           fi
+          {
+            printf '## Vulnerability check output\n\n```\n'
+            cat /tmp/vulncheck.txt
+            printf '```\n'
+          } > /tmp/issue_body.txt
           gh issue create \
             --title "Vulnerability detected ($(date -u '+%Y-%m-%d'))" \
-            --body "## Vulnerability check output
-
-\`\`\`
-$(cat /tmp/vulncheck.txt)
-\`\`\`"
+            --body-file /tmp/issue_body.txt
