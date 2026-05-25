@@ -13,9 +13,15 @@ import (
 
 type FlameNode struct {
 	Name        string                `json:"name"`
+	Filename    string                `json:"filename,omitempty"`
 	Value       int64                 `json:"value"`
 	Children    []*FlameNode          `json:"children,omitempty"`
-	childrenMap map[string]*FlameNode `json:"-`
+	childrenMap map[string]*FlameNode `json:"-"`
+}
+
+type FrameInfo struct {
+	Name     string
+	Filename string
 }
 
 type NamedFlamegraph struct {
@@ -96,7 +102,7 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 	}
 
 	// Cache resolved stacks to avoid re-resolving identical stacks
-	stackCache := make(map[int32][]string)
+	stackCache := make(map[int32][]FrameInfo)
 
 	profileCount := 0
 	for _, entry := range entries {
@@ -113,7 +119,7 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 	return root
 }
 
-func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, stackCache map[int32][]string) {
+func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo) {
 	if profile == nil || len(profile.Samples) == 0 {
 		return
 	}
@@ -148,8 +154,8 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 	}
 }
 
-func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, stackCache map[int32][]string) []string {
-	var stack []string
+func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo) []FrameInfo {
+	var stack []FrameInfo
 
 	if dict == nil {
 		return stack
@@ -176,7 +182,7 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 
 		if len(loc.Lines) == 0 {
 			// Location has no line info; use address as fallback
-			stack = append(stack, "[0x"+strconv.FormatUint(loc.Address, 16)+"]")
+			stack = append(stack, FrameInfo{Name: "[0x" + strconv.FormatUint(loc.Address, 16) + "]"})
 			continue
 		}
 
@@ -193,7 +199,8 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 
 			name := stringTableLookup(dict, fn.NameStrindex)
 			if name != "" {
-				stack = append(stack, name)
+				filename := stringTableLookup(dict, fn.FilenameStrindex)
+				stack = append(stack, FrameInfo{Name: name, Filename: filename})
 			}
 		}
 	}
@@ -207,21 +214,22 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 	return stack
 }
 
-func insertStack(root *FlameNode, stack []string, value int64) {
+func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
 	current := root
 	root.Value += value
 
-	for _, name := range stack {
-		child, exists := current.childrenMap[name]
+	for _, frame := range stack {
+		child, exists := current.childrenMap[frame.Name]
 		if !exists {
 			child = &FlameNode{
-				Name:        name,
+				Name:        frame.Name,
+				Filename:    frame.Filename,
 				Value:       0,
 				Children:    []*FlameNode{},
 				childrenMap: make(map[string]*FlameNode),
 			}
 			current.Children = append(current.Children, child)
-			current.childrenMap[name] = child
+			current.childrenMap[frame.Name] = child
 		}
 
 		child.Value += value
