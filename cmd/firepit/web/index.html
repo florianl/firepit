@@ -281,6 +281,13 @@
                         <option value="heatmap">Flamescope</option>
                     </select>
                 </div>
+                <div class="view-mode-filter" id="sort-mode-filter">
+                    <label for="sort-select">Sort:</label>
+                    <select id="sort-select">
+                        <option value="time-ordered">Time Ordered</option>
+                        <option value="left-heavy">Left Heavy</option>
+                    </select>
+                </div>
                 <div class="resource-filter">
                     <label for="resource-key-select">Filter:</label>
                     <select id="resource-key-select">
@@ -325,6 +332,7 @@
         let currentGraphs = null;
         let viewMode = 'flamegraph';
         let currentHeatMaps = null;
+        let sortMode = 'time-ordered';
 
         function applyResourceFilter() {
             selectedResourceType = (selectedAttrKey && selectedAttrValue)
@@ -398,10 +406,13 @@
         function onViewModeChange(selectedMode) {
             viewMode = selectedMode;
             const filterContainer = document.getElementById('filter-container');
-            if (viewMode === 'heatmap' && isPaused) {
-                filterContainer.classList.remove('visible');
-            } else if (viewMode === 'flamegraph' && isPaused) {
-                filterContainer.classList.add('visible');
+            const sortFilter = document.getElementById('sort-mode-filter');
+            if (viewMode === 'heatmap') {
+                if (isPaused) filterContainer.classList.remove('visible');
+                sortFilter.style.display = 'none';
+            } else {
+                if (isPaused) filterContainer.classList.add('visible');
+                sortFilter.style.display = 'flex';
             }
             updateChart();
         }
@@ -459,9 +470,14 @@ function applyFrameFilter() {
             const width = document.documentElement.clientWidth;
             const height = Math.max(400, window.innerHeight - 220);
 
+            const sortFn = sortMode === 'left-heavy'
+                ? (a, b) => b.value - a.value
+                : false;
+
             const fg = flamegraph()
                 .width(width)
-                .height(height);
+                .height(height)
+                .sort(sortFn);
 
             const svg = d3.select('#' + containerId).append('svg')
                 .attr('width', width)
@@ -879,6 +895,10 @@ function applyFrameFilter() {
             });
             document.getElementById('frame-filter').addEventListener('input', applyFrameFilter);
             document.getElementById('export-btn').addEventListener('click', exportCurrentGraph);
+            document.getElementById('sort-select').addEventListener('change', (e) => {
+                sortMode = e.target.value;
+                if (viewMode === 'flamegraph') updateChart();
+            });
         }
 
         if (document.readyState === 'loading') {
