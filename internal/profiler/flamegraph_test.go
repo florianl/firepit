@@ -194,6 +194,81 @@ func TestFilterByResourceTypeNilAttributes(t *testing.T) {
 	}
 }
 
+func TestToFlamegraphWithFilename(t *testing.T) {
+	dict := &profilespb.ProfilesDictionary{
+		StringTable: []string{"", "main.go", "myFunc"},
+		LocationTable: []*profilespb.Location{
+			{
+				Lines: []*profilespb.Line{
+					{FunctionIndex: 0},
+				},
+			},
+		},
+		FunctionTable: []*profilespb.Function{
+			{NameStrindex: 2, FilenameStrindex: 1},
+		},
+		StackTable: []*profilespb.Stack{
+			{LocationIndices: []int32{0}},
+		},
+	}
+
+	profile := &profilespb.Profile{
+		Samples: []*profilespb.Sample{
+			{StackIndex: 0, Values: []int64{1}},
+		},
+	}
+
+	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}})
+
+	if len(root.Children) == 0 {
+		t.Fatal("expected a child node")
+	}
+
+	child := root.Children[0]
+	if child.Name != "myFunc" {
+		t.Fatalf("expected name 'myFunc', got '%s'", child.Name)
+	}
+	if child.Filename != "main.go" {
+		t.Fatalf("expected filename 'main.go', got '%s'", child.Filename)
+	}
+}
+
+func TestToFlamegraphWithoutFilename(t *testing.T) {
+	dict := &profilespb.ProfilesDictionary{
+		StringTable: []string{"", "myFunc"},
+		LocationTable: []*profilespb.Location{
+			{
+				Lines: []*profilespb.Line{
+					{FunctionIndex: 0},
+				},
+			},
+		},
+		FunctionTable: []*profilespb.Function{
+			{NameStrindex: 1},
+		},
+		StackTable: []*profilespb.Stack{
+			{LocationIndices: []int32{0}},
+		},
+	}
+
+	profile := &profilespb.Profile{
+		Samples: []*profilespb.Sample{
+			{StackIndex: 0, Values: []int64{1}},
+		},
+	}
+
+	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}})
+
+	if len(root.Children) == 0 {
+		t.Fatal("expected a child node")
+	}
+
+	child := root.Children[0]
+	if child.Filename != "" {
+		t.Fatalf("expected empty filename, got '%s'", child.Filename)
+	}
+}
+
 func TestNamedFlamegraph(t *testing.T) {
 	ng := NamedFlamegraph{
 		Type: "cpu",

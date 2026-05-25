@@ -477,7 +477,15 @@ function applyFrameFilter() {
             const fg = flamegraph()
                 .width(width)
                 .height(height)
-                .sort(sortFn);
+                .sort(sortFn)
+                .setLabelHandler(function(d) {
+                    const name = d.data.name || d.data.n || '';
+                    const pct = d3.format('.3f')(100 * (d.x1 - d.x0));
+                    const samples = ('v' in d) ? d.v : d.value;
+                    const filename = d.data.filename;
+                    const base = name + ' (' + pct + '%, ' + samples + ' samples)';
+                    return filename ? base + ' — ' + filename : base;
+                });
 
             const svg = d3.select('#' + containerId).append('svg')
                 .attr('width', width)
