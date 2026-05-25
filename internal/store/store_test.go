@@ -394,7 +394,7 @@ func TestMemoryLimitDisabled(t *testing.T) {
 		},
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		st.Add([]*profilespb.ResourceProfiles{rp}, dict)
 	}
 

@@ -299,7 +299,7 @@ func TestHandleFlamegraph(t *testing.T) {
 					t.Errorf("expected Content-Type application/json, got %s", ct)
 				}
 
-				var result []interface{}
+				var result []any
 				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 					t.Errorf("response is not valid JSON: %v", err)
 				}
@@ -352,7 +352,7 @@ func TestHandleProfiles(t *testing.T) {
 					t.Errorf("expected Content-Type application/json, got %s", ct)
 				}
 
-				var result map[string]interface{}
+				var result map[string]any
 				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 					t.Errorf("response is not valid JSON: %v", err)
 				}
@@ -409,7 +409,7 @@ func TestHandleResourceTypes(t *testing.T) {
 					t.Errorf("expected Content-Type application/json, got %s", ct)
 				}
 
-				var result map[string]interface{}
+				var result map[string]any
 				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 					t.Errorf("response is not valid JSON: %v", err)
 				}
@@ -470,7 +470,7 @@ func TestHandleHeatMap(t *testing.T) {
 					t.Errorf("expected Content-Type application/json, got %s", ct)
 				}
 
-				var result []interface{}
+				var result []any
 				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 					t.Errorf("response is not valid JSON: %v", err)
 				}

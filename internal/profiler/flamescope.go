@@ -80,10 +80,7 @@ func ToHeatMap(entries []store.ProfileEntry) HeatMapData {
 	}
 
 	// Calculate number of seconds
-	numSeconds := int((maxT-minT)/1_000_000_000) + 1
-	if numSeconds > 3600 {
-		numSeconds = 3600
-	}
+	numSeconds := min(int((maxT-minT)/1_000_000_000)+1, 3600)
 
 	// Allocate cells array
 	cells := make([]int64, numSeconds*numSubBuckets)

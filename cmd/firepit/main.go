@@ -179,25 +179,19 @@ func main() {
 	var otlpServer *http.Server
 
 	// ingest - grpc
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		grpcServer = startGRPCServer(st, cfg.GRPCAddr)
-	}()
+	})
 
 	// ingest - http
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		otlpServer = startOTLPHTTPServer(st, cfg)
-	}()
+	})
 
 	// UI
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		webServer = startWebUIServer(st, cfg)
-	}()
+	})
 
 	<-ctx.Done()
 	slog.Info("Shutting down")
@@ -394,7 +388,7 @@ func handleProfiles(st *store.Store) http.HandlerFunc {
 
 		count, minTime, maxTime, ok := st.Stats()
 
-		info := map[string]interface{}{
+		info := map[string]any{
 			"count": count,
 		}
 
