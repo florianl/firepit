@@ -6,10 +6,17 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/florianl/firepit/internal/store"
 	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
 )
+
+var stackCachePool = sync.Pool{
+	New: func() any {
+		return make(map[int32][]FrameInfo)
+	},
+}
 
 type FlameNode struct {
 	Name        string                `json:"name"`
@@ -101,8 +108,11 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 		childrenMap: make(map[string]*FlameNode),
 	}
 
-	// Cache resolved stacks to avoid re-resolving identical stacks
-	stackCache := make(map[int32][]FrameInfo)
+	stackCache := stackCachePool.Get().(map[int32][]FrameInfo)
+	defer func() {
+		clear(stackCache)
+		stackCachePool.Put(stackCache)
+	}()
 
 	profileCount := 0
 	for _, entry := range entries {
