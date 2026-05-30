@@ -53,6 +53,20 @@ service:
       exporters: [otlp_grpc/firepit]
 ```
 
+## Screenshots
+
+### Flame Graph View
+
+The flame graph view aggregates all collected profiles into a single interactive visualization. Each frame represents a function call, with width proportional to its share of total samples. Use the filter controls at the top to narrow down by resource attribute (e.g. `process.executable.name`) and switch between different reported sample types.
+
+![Flame graph view showing aggregated CPU profiles](img/flamegraph.png)
+
+### Flamescope View
+
+The flamescope view plots samples across a two-dimensional heatmap, wall-clock time on the x-axis and sub-second offset on the y-axis. This makes periodic or time-correlated performance patterns immediately visible, helping to correlate spikes with external events.
+
+![Flamescope view showing time-based profile heatmap](img/flamescope.png)
+
 ## ⚠️ Development and Demo Use Only
 
 Firepit is designed for **development and demo purposes only**. It is **not intended for production use**.
