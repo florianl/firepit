@@ -1,6 +1,7 @@
 on:
+  workflow_dispatch: # Allows manual triggering of the workflow
   push:
-    branches: [ main ]
+    tags: [ 'v*']
 
 permissions: read-all
 
@@ -33,7 +34,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=
 
       - name: Build and push
