@@ -485,6 +485,40 @@ function applyFrameFilter() {
                     const filename = d.data.filename;
                     const base = name + ' (' + pct + '%, ' + samples + ' samples)';
                     return filename ? base + ' — ' + filename : base;
+                })
+                .setColorMapper(function(d, originalColor) {
+                    if (originalColor === '#E600E6') return originalColor;
+                    const frameType = d.data.l || d.data.libtype || '';
+                    if (!frameType) return originalColor;
+                    // Reproduce the library's name-hash saturation for subtle per-frame variation
+                    const name = d.data.name || '';
+                    let s = 0;
+                    const sym = name.split('(')[0];
+                    if (sym) {
+                        let sum = 0, weight = 0, w = 1;
+                        for (let i = 0; i < sym.length && i <= 6; i++) {
+                            sum += w * (sym.charCodeAt(i) % 10);
+                            weight += 9 * w;
+                            w *= 0.7;
+                        }
+                        if (weight > 0) s = sum / weight;
+                    }
+                    const c = (b, r) => b + Math.round(r * s);
+                    switch (frameType) {
+                        case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
+                        case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
+                        case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
+                        case 'jvm':    return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
+                        case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
+                        case 'v8js':   return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
+                        case 'ruby':   return `rgb(${c(190,65)},${c(90,65)},0)`;
+                        case 'perl':   return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
+                        case 'php':    return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
+                        case 'beam':   return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
+                        case 'go':     return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
+                        case 'rust':   return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
+                        default:       return originalColor;
+                    }
                 });
 
             const svg = d3.select('#' + containerId).append('svg')
