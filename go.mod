@@ -1,6 +1,6 @@
 module github.com/florianl/firepit
 
-go 1.25.10
+go 1.25.11
 
 require (
 	go.opentelemetry.io/proto/otlp v1.10.0
