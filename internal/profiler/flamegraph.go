@@ -22,14 +22,16 @@ var stackCachePool = sync.Pool{
 type FlameNode struct {
 	Name        string                `json:"name"`
 	Filename    string                `json:"filename,omitempty"`
+	FrameType   string                `json:"l,omitempty"`
 	Value       int64                 `json:"value"`
 	Children    []*FlameNode          `json:"children,omitempty"`
 	childrenMap map[string]*FlameNode `json:"-"`
 }
 
 type FrameInfo struct {
-	Name     string
-	Filename string
+	Name      string
+	Filename  string
+	FrameType string
 }
 
 type NamedFlamegraph struct {
@@ -71,6 +73,29 @@ func stringTableLookup(dict *profilespb.ProfilesDictionary, idx int32) string {
 		return ""
 	}
 	return dict.StringTable[idx]
+}
+
+// attributeTableLookup safely looks up an attribute by index.
+// Returns nil if the index is out of bounds or negative.
+func attributeTableLookup(dict *profilespb.ProfilesDictionary, idx int32) *profilespb.KeyValueAndUnit {
+	if idx < 0 || int(idx) >= len(dict.AttributeTable) {
+		return nil
+	}
+	return dict.AttributeTable[idx]
+}
+
+// frameTypeFromLocation extracts the profile.frame.type attribute from a Location.
+func frameTypeFromLocation(dict *profilespb.ProfilesDictionary, loc *profilespb.Location) string {
+	for _, attrIdx := range loc.AttributeIndices {
+		attr := attributeTableLookup(dict, attrIdx)
+		if attr == nil || attr.Value == nil {
+			continue
+		}
+		if stringTableLookup(dict, attr.KeyStrindex) == "profile.frame.type" {
+			return attr.Value.GetStringValue()
+		}
+	}
+	return ""
 }
 
 func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []store.ProfileEntry {
@@ -191,9 +216,11 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 			continue
 		}
 
+		frameType := frameTypeFromLocation(dict, loc)
+
 		if len(loc.Lines) == 0 {
 			// Location has no line info; use address as fallback
-			stack = append(stack, FrameInfo{Name: "[0x" + strconv.FormatUint(loc.Address, 16) + "]"})
+			stack = append(stack, FrameInfo{Name: "[0x" + strconv.FormatUint(loc.Address, 16) + "]", FrameType: frameType})
 			continue
 		}
 
@@ -214,7 +241,7 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 				if line.Line != 0 {
 					filename += fmt.Sprintf(":%d", line.Line)
 				}
-				stack = append(stack, FrameInfo{Name: name, Filename: filename})
+				stack = append(stack, FrameInfo{Name: name, Filename: filename, FrameType: frameType})
 			}
 		}
 	}
@@ -238,6 +265,7 @@ func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
 			child = &FlameNode{
 				Name:        frame.Name,
 				Filename:    frame.Filename,
+				FrameType:   frame.FrameType,
 				Value:       0,
 				Children:    []*FlameNode{},
 				childrenMap: make(map[string]*FlameNode),

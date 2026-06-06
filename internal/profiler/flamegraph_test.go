@@ -287,6 +287,84 @@ func TestNamedFlamegraph(t *testing.T) {
 	}
 }
 
+func TestToFlamegraphWithFrameType(t *testing.T) {
+	dict := &profilespb.ProfilesDictionary{
+		StringTable: []string{"", "profile.frame.type", "python", "myFunc"},
+		AttributeTable: []*profilespb.KeyValueAndUnit{
+			{}, // index 0 is always zero value
+			{
+				KeyStrindex: 1, // "profile.frame.type"
+				Value: &commonpb.AnyValue{
+					Value: &commonpb.AnyValue_StringValue{StringValue: "cpython"},
+				},
+			},
+		},
+		LocationTable: []*profilespb.Location{
+			{
+				Lines:            []*profilespb.Line{{FunctionIndex: 0}},
+				AttributeIndices: []int32{1},
+			},
+		},
+		FunctionTable: []*profilespb.Function{
+			{NameStrindex: 3},
+		},
+		StackTable: []*profilespb.Stack{
+			{LocationIndices: []int32{0}},
+		},
+	}
+
+	profile := &profilespb.Profile{
+		Samples: []*profilespb.Sample{
+			{StackIndex: 0, Values: []int64{1}},
+		},
+	}
+
+	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}})
+
+	if len(root.Children) == 0 {
+		t.Fatal("expected a child node")
+	}
+
+	child := root.Children[0]
+	if child.Name != "myFunc" {
+		t.Fatalf("expected name 'myFunc', got '%s'", child.Name)
+	}
+	if child.FrameType != "cpython" {
+		t.Fatalf("expected libtype 'cpython', got '%s'", child.FrameType)
+	}
+}
+
+func TestToFlamegraphNoFrameType(t *testing.T) {
+	dict := &profilespb.ProfilesDictionary{
+		StringTable: []string{"", "myFunc"},
+		LocationTable: []*profilespb.Location{
+			{Lines: []*profilespb.Line{{FunctionIndex: 0}}},
+		},
+		FunctionTable: []*profilespb.Function{
+			{NameStrindex: 1},
+		},
+		StackTable: []*profilespb.Stack{
+			{LocationIndices: []int32{0}},
+		},
+	}
+
+	profile := &profilespb.Profile{
+		Samples: []*profilespb.Sample{
+			{StackIndex: 0, Values: []int64{1}},
+		},
+	}
+
+	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}})
+
+	if len(root.Children) == 0 {
+		t.Fatal("expected a child node")
+	}
+
+	if root.Children[0].FrameType != "" {
+		t.Fatalf("expected empty libtype, got '%s'", root.Children[0].FrameType)
+	}
+}
+
 func TestFilterByResourceTypeInvalidFormat(t *testing.T) {
 	entry := store.ProfileEntry{
 		Attributes: []*commonpb.KeyValue{
