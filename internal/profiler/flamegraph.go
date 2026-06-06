@@ -211,7 +211,9 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 			name := stringTableLookup(dict, fn.NameStrindex)
 			if name != "" {
 				filename := stringTableLookup(dict, fn.FilenameStrindex)
-				filename += fmt.Sprintf(":%d", line.Line)
+				if line.Line != 0 {
+					filename += fmt.Sprintf(":%d", line.Line)
+				}
 				stack = append(stack, FrameInfo{Name: name, Filename: filename})
 			}
 		}
