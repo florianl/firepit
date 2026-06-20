@@ -2,7 +2,7 @@
 
 WEB_DIR := cmd/firepit/web
 D3_JS := $(WEB_DIR)/d3.v7.min.js
-D3_FLAMEGRAPH_JS := $(WEB_DIR)/d3-flamegraph.min.js
+D3_FLAMEGRAPH_JS := $(WEB_DIR)/d3-flamegraph.umd.min.js
 D3_FLAMEGRAPH_CSS := $(WEB_DIR)/d3-flamegraph.css
 
 generate: $(D3_JS) $(D3_FLAMEGRAPH_JS) $(D3_FLAMEGRAPH_CSS)
@@ -13,11 +13,11 @@ $(D3_JS):
 
 $(D3_FLAMEGRAPH_JS):
 	@mkdir -p $(WEB_DIR)
-	curl -fsSL https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js -o $@
+	curl -fsSL https://cdn.jsdelivr.net/npm/d3-flame-graph@5.0.0/dist/d3-flamegraph.umd.min.js -o $@
 
 $(D3_FLAMEGRAPH_CSS):
 	@mkdir -p $(WEB_DIR)
-	curl -fsSL https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css -o $@
+	curl -fsSL https://cdn.jsdelivr.net/npm/d3-flame-graph@5.0.0/dist/d3-flamegraph.css -o $@
 
 build: $(D3_JS) $(D3_FLAMEGRAPH_JS) $(D3_FLAMEGRAPH_CSS)
 	go build -o firepit ./cmd/firepit
