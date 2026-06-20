@@ -22,7 +22,7 @@ RUN make generate
 RUN make build
 
 # Final stage
-FROM alpine:3.19
+FROM alpine:3.24.1
 
 WORKDIR /app
 
