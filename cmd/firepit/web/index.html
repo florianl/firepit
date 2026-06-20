@@ -474,7 +474,7 @@ function applyFrameFilter() {
                 ? (a, b) => b.value - a.value
                 : false;
 
-            const fg = flamegraph()
+            const fg = flamegraph.default()
                 .width(width)
                 .height(height)
                 .sort(sortFn)
@@ -521,11 +521,8 @@ function applyFrameFilter() {
                     }
                 });
 
-            const svg = d3.select('#' + containerId).append('svg')
-                .attr('width', width)
-                .attr('height', height);
-
-            svg.datum(data).call(fg);
+            const selection = d3.select('#' + containerId);
+            selection.datum(data).call(fg);
 
             // Reapply frame filter if one is active
             if (frameFilter) {
@@ -533,7 +530,7 @@ function applyFrameFilter() {
             }
 
             // Listen for clicks on the flamegraph and reapply filter after interaction
-            svg.on('click', function() {
+            selection.on('click', function() {
                 if (frameFilter) {
                     setTimeout(applyFrameFilter, 50);
                 }
