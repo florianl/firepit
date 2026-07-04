@@ -39,7 +39,6 @@ jobs:
             type=sha,prefix=
           labels: |
             org.opencontainers.image.name=firepit
-            org.opencontainers.image.source=github.com/florianl/firepit
             org.opencontainers.image.description=OTel Profiles receiver and visualizer
             org.opencontainers.image.licenses=MIT
 
@@ -51,6 +50,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
