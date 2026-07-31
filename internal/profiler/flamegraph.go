@@ -39,6 +39,22 @@ type NamedFlamegraph struct {
 	Root *FlameNode `json:"root"`
 }
 
+type FunctionStats struct {
+	Name  string `json:"name"`
+	Self  int64  `json:"self"`
+	Total int64  `json:"total"`
+}
+
+type SandwitchData struct {
+	Functions []*FunctionStats `json:"functions"`
+	Root      *FlameNode       `json:"root"`
+}
+
+type NamedSandwitch struct {
+	Type string        `json:"type"`
+	Data *SandwitchData `json:"data"`
+}
+
 // stackTableLookup safely looks up a stack entry by index.
 // Returns nil if the index is out of bounds or negative.
 func stackTableLookup(dict *profilespb.ProfilesDictionary, idx int32) *profilespb.Stack {
@@ -277,4 +293,278 @@ func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
 		child.Value += value
 		current = child
 	}
+}
+
+func ToSandwitch(root *FlameNode) *SandwitchData {
+	stats := make(map[string]*FunctionStats)
+	collectFunctionStats(root, stats)
+
+	functions := make([]*FunctionStats, 0, len(stats))
+	for _, stat := range stats {
+		functions = append(functions, stat)
+	}
+
+	slices.SortFunc(functions, func(a, b *FunctionStats) int {
+		if a.Total != b.Total {
+			return int(b.Total - a.Total)
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+
+	return &SandwitchData{
+		Functions: functions,
+		Root:      root,
+	}
+}
+
+// SandwitchGraphs holds caller and callee flamegraphs for a target function
+type SandwitchGraphs struct {
+	Callers *FlameNode `json:"callers"`
+	Callees *FlameNode `json:"callees"`
+}
+
+// ExtractSandwitchForFunction builds caller and callee flamegraphs for a target function
+func ExtractSandwitchForFunction(root *FlameNode, targetName string) *FlameNode {
+	// For backward compatibility, return the combined view
+	// (deprecated - use ExtractSandwitchGraphs instead)
+	sg := ExtractSandwitchGraphs(root, targetName)
+	if sg.Callers != nil {
+		return sg.Callers
+	}
+	return root
+}
+
+// ExtractSandwitchGraphs builds separate caller and callee flamegraphs for a target function
+func ExtractSandwitchGraphs(root *FlameNode, targetName string) *SandwitchGraphs {
+	if root == nil || targetName == "" {
+		return &SandwitchGraphs{}
+	}
+
+	// Find all paths through the target function and build both caller and callee maps
+	var callersMap = make(map[string]int64)
+	var targetValue int64
+	var calleesMap = make(map[string]int64)
+
+	extractSandwitchPaths(root, targetName, []string{}, &callersMap, &targetValue, &calleesMap)
+
+	if targetValue == 0 {
+		return &SandwitchGraphs{}
+	}
+
+	// Build caller flamegraph with target as root, showing who calls it
+	callersGraph := buildCallerGraph(root, targetName, targetValue)
+
+	// Build callee flamegraph with target as root, showing what it calls
+	calleeGraph := buildCalleeGraph(root, targetName, targetValue)
+
+	return &SandwitchGraphs{
+		Callers: callersGraph,
+		Callees: calleeGraph,
+	}
+}
+
+func buildCallerGraph(originalRoot *FlameNode, targetName string, targetValue int64) *FlameNode {
+	// Find the path to target and build an inverted tree for icicle visualization
+	var pathToTarget []*FlameNode
+	findPathToTarget(originalRoot, targetName, []*FlameNode{}, &pathToTarget)
+
+	if len(pathToTarget) == 0 {
+		return &FlameNode{Name: targetName, Value: targetValue, Children: []*FlameNode{}, childrenMap: make(map[string]*FlameNode)}
+	}
+
+	// Build inverted tree: target at root (top, widest) with callers as descendants
+	// pathToTarget[0] is root (artificial), pathToTarget[len-1] is targetFunc
+	// Result: targetFunc (root) -> funcB -> funcA -> ... (excluding artificial root)
+	newRoot := &FlameNode{
+		Name:        targetName,
+		Value:       targetValue,
+		Children:    []*FlameNode{},
+		childrenMap: make(map[string]*FlameNode),
+	}
+
+	// Add callers in reverse order (from immediate caller up, but excluding the artificial root node)
+	currentNode := newRoot
+	for i := len(pathToTarget) - 2; i > 0; i-- {
+		node := pathToTarget[i]
+		newNode := &FlameNode{
+			Name:        node.Name,
+			Value:       node.Value,
+			Filename:    node.Filename,
+			FrameType:   node.FrameType,
+			Children:    []*FlameNode{},
+			childrenMap: make(map[string]*FlameNode),
+		}
+		currentNode.Children = append(currentNode.Children, newNode)
+		currentNode.childrenMap[newNode.Name] = newNode
+		currentNode = newNode
+	}
+
+	return newRoot
+}
+
+func findPathToTarget(node *FlameNode, targetName string, currentPath []*FlameNode, resultPath *[]*FlameNode) bool {
+	currentPath = append(currentPath, node)
+
+	if node.Name == targetName {
+		*resultPath = make([]*FlameNode, len(currentPath))
+		copy(*resultPath, currentPath)
+		return true
+	}
+
+	for _, child := range node.Children {
+		if findPathToTarget(child, targetName, currentPath, resultPath) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func buildCalleeGraph(originalRoot *FlameNode, targetName string, targetValue int64) *FlameNode {
+	// Create root as the target function
+	root := &FlameNode{
+		Name:        targetName,
+		Value:       targetValue,
+		Children:    []*FlameNode{},
+		childrenMap: make(map[string]*FlameNode),
+	}
+
+	// Find all callees (full subtrees) of the target
+	extractCalleeSubtrees(originalRoot, targetName, root)
+
+	return root
+}
+
+
+func extractCalleeSubtrees(node *FlameNode, targetName string, targetRoot *FlameNode) {
+	if node.Name == targetName {
+		// Found target - copy all its children (full subtrees) to targetRoot
+		for _, child := range node.Children {
+			copiedChild := copyFlameNode(child)
+			if existing, exists := targetRoot.childrenMap[copiedChild.Name]; exists {
+				// Merge with existing child
+				mergeFlameNodes(existing, copiedChild)
+			} else {
+				targetRoot.Children = append(targetRoot.Children, copiedChild)
+				targetRoot.childrenMap[copiedChild.Name] = copiedChild
+			}
+		}
+		return
+	}
+
+	// Continue searching in children
+	for _, child := range node.Children {
+		extractCalleeSubtrees(child, targetName, targetRoot)
+	}
+}
+
+func copyFlameNode(node *FlameNode) *FlameNode {
+	if node == nil {
+		return nil
+	}
+	newNode := &FlameNode{
+		Name:        node.Name,
+		Value:       node.Value,
+		Filename:    node.Filename,
+		FrameType:   node.FrameType,
+		Children:    make([]*FlameNode, 0, len(node.Children)),
+		childrenMap: make(map[string]*FlameNode),
+	}
+	for _, child := range node.Children {
+		copiedChild := copyFlameNode(child)
+		newNode.Children = append(newNode.Children, copiedChild)
+		newNode.childrenMap[copiedChild.Name] = copiedChild
+	}
+	return newNode
+}
+
+func mergeFlameNodes(dst, src *FlameNode) {
+	dst.Value += src.Value
+	for _, srcChild := range src.Children {
+		if dstChild, exists := dst.childrenMap[srcChild.Name]; exists {
+			mergeFlameNodes(dstChild, srcChild)
+		} else {
+			copiedChild := copyFlameNode(srcChild)
+			dst.Children = append(dst.Children, copiedChild)
+			dst.childrenMap[copiedChild.Name] = copiedChild
+		}
+	}
+}
+
+func extractSandwitchPaths(node *FlameNode, targetName string, ancestors []string, callers *map[string]int64, targetValue *int64, callees *map[string]int64) {
+	if node.Name == targetName {
+		// Found target - record ancestors as callers and self value
+		*targetValue += node.Value
+
+		for _, ancestor := range ancestors {
+			if ancestor != "root" {
+				(*callers)[ancestor] += node.Value
+			}
+		}
+
+		// Process children as callees
+		for _, child := range node.Children {
+			aggregateCallees(child, callees, node.Value)
+		}
+		return
+	}
+
+	// Continue searching in children
+	newAncestors := append(ancestors, node.Name)
+	for _, child := range node.Children {
+		extractSandwitchPaths(child, targetName, newAncestors, callers, targetValue, callees)
+	}
+}
+
+func aggregateCallees(node *FlameNode, callees *map[string]int64, parentValue int64) {
+	if node.Name != "root" {
+		proportion := float64(node.Value) / float64(parentValue)
+		(*callees)[node.Name] += int64(float64(node.Value) * proportion)
+	}
+
+	for _, child := range node.Children {
+		aggregateCallees(child, callees, node.Value)
+	}
+}
+
+func collectFunctionStats(node *FlameNode, stats map[string]*FunctionStats) {
+	if node.Name == "root" {
+		for _, child := range node.Children {
+			collectFunctionStats(child, stats)
+		}
+		return
+	}
+
+	if _, exists := stats[node.Name]; !exists {
+		stats[node.Name] = &FunctionStats{
+			Name:  node.Name,
+			Self:  0,
+			Total: 0,
+		}
+	}
+
+	stat := stats[node.Name]
+	stat.Total += node.Value
+	stat.Self += calculateSelfValue(node)
+
+	for _, child := range node.Children {
+		collectFunctionStats(child, stats)
+	}
+}
+
+func calculateSelfValue(node *FlameNode) int64 {
+	if len(node.Children) == 0 {
+		return node.Value
+	}
+
+	childrenSum := int64(0)
+	for _, child := range node.Children {
+		childrenSum += child.Value
+	}
+
+	self := node.Value - childrenSum
+	if self < 0 {
+		return 0
+	}
+	return self
 }

@@ -275,6 +275,8 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 
 	mux.HandleFunc(base+"/api/flamegraph", handleFlamegraph(st))
 	mux.HandleFunc(base+"/api/flamescope", handleFlamescope(st))
+	mux.HandleFunc(base+"/api/sandwitch", handleSandwich(st))
+	mux.HandleFunc(base+"/api/sandwitch-detail", handleSandwitchDetail(st))
 	mux.HandleFunc(base+"/api/profiles", handleProfiles(st))
 	mux.HandleFunc(base+"/api/resource-types", handleResourceTypes(st))
 
@@ -413,5 +415,64 @@ func handleResourceTypes(st *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(types)
+	}
+}
+
+func handleSandwich(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		resourceType := r.URL.Query().Get("resourceType")
+
+		types := st.SampleTypes()
+		sandwitches := make([]profiler.NamedSandwitch, 0, len(types))
+		for _, t := range types {
+			entries := st.ProfileEntries(t)
+			entries = profiler.FilterByResourceType(entries, resourceType)
+			root := profiler.ToFlamegraph(entries)
+			data := profiler.ToSandwitch(root)
+			sandwitches = append(sandwitches, profiler.NamedSandwitch{Type: t, Data: data})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sandwitches)
+	}
+}
+
+func handleSandwitchDetail(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		resourceType := r.URL.Query().Get("resourceType")
+		functionName := r.URL.Query().Get("functionName")
+		sampleType := r.URL.Query().Get("sampleType")
+
+		if functionName == "" {
+			http.Error(w, "functionName parameter required", http.StatusBadRequest)
+			return
+		}
+
+		types := st.SampleTypes()
+		if sampleType != "" {
+			types = []string{sampleType}
+		}
+
+		result := make(map[string]interface{})
+		for _, t := range types {
+			entries := st.ProfileEntries(t)
+			entries = profiler.FilterByResourceType(entries, resourceType)
+			root := profiler.ToFlamegraph(entries)
+			sandwitch := profiler.ExtractSandwitchGraphs(root, functionName)
+			result[t] = sandwitch
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
