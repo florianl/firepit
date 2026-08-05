@@ -51,7 +51,7 @@ type SandwitchData struct {
 }
 
 type NamedSandwitch struct {
-	Type string        `json:"type"`
+	Type string         `json:"type"`
 	Data *SandwitchData `json:"data"`
 }
 
@@ -341,9 +341,9 @@ func ExtractSandwitchGraphs(root *FlameNode, targetName string) *SandwitchGraphs
 	}
 
 	// Find all paths through the target function and build both caller and callee maps
-	var callersMap = make(map[string]int64)
+	callersMap := make(map[string]int64)
 	var targetValue int64
-	var calleesMap = make(map[string]int64)
+	calleesMap := make(map[string]int64)
 
 	extractSandwitchPaths(root, targetName, []string{}, &callersMap, &targetValue, &calleesMap)
 
@@ -434,7 +434,6 @@ func buildCalleeGraph(originalRoot *FlameNode, targetName string, targetValue in
 
 	return root
 }
-
 
 func extractCalleeSubtrees(node *FlameNode, targetName string, targetRoot *FlameNode) {
 	if node.Name == targetName {
