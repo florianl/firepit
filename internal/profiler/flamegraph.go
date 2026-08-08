@@ -517,8 +517,7 @@ func extractSandwitchPaths(node *FlameNode, targetName string, ancestors []strin
 
 func aggregateCallees(node *FlameNode, callees *map[string]int64, parentValue int64) {
 	if node.Name != "root" {
-		proportion := float64(node.Value) / float64(parentValue)
-		(*callees)[node.Name] += int64(float64(node.Value) * proportion)
+		(*callees)[node.Name] += node.Value
 	}
 
 	for _, child := range node.Children {

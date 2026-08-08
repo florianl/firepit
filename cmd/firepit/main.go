@@ -438,7 +438,10 @@ func handleSandwitch(st *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(sandwitches)
+		if err := json.NewEncoder(w).Encode(sandwitches); err != nil {
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
@@ -464,15 +467,27 @@ func handleSandwitchDetail(st *store.Store) http.HandlerFunc {
 		}
 
 		result := make(map[string]interface{})
+		foundInAnyType := false
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
 			entries = profiler.FilterByResourceType(entries, resourceType)
 			root := profiler.ToFlamegraph(entries)
 			sandwitch := profiler.ExtractSandwitchGraphs(root, functionName)
 			result[t] = sandwitch
+			if sandwitch.Callers != nil || sandwitch.Callees != nil {
+				foundInAnyType = true
+			}
+		}
+
+		if !foundInAnyType {
+			http.Error(w, "Function not found", http.StatusNotFound)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
 	}
 }

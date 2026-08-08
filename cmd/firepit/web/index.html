@@ -1879,7 +1879,7 @@ function applyFrameFilter() {
                 const delta = e.clientX - startX;
                 const newWidth = Math.max(200, startWidth + delta);
                 const container = divider.parentElement;
-                const maxWidth = container.clientWidth - 200;
+                const maxWidth = Math.max(200, container.clientWidth - 200);
                 if (newWidth <= maxWidth) {
                     leftPanel.style.flex = `0 0 ${newWidth}px`;
                 }
