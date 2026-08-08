@@ -89,6 +89,9 @@
             display: none;
         }
         .tab-panel.active {
+            display: flex;
+        }
+        .tab-panel.active:not(.sandwitch-container) {
             display: block;
         }
         .header-controls {
@@ -266,6 +269,145 @@
             display: none;
             z-index: 1000;
         }
+        .sandwitch-container {
+            display: flex;
+            width: 100%;
+            height: calc(100vh - 240px);
+            min-height: 400px;
+        }
+        .sandwitch-left {
+            flex: 0 0 35%;
+            overflow-y: auto;
+            border-right: 1px solid #ddd;
+            background: white;
+        }
+        .sandwitch-divider {
+            flex: 0 0 4px;
+            background: #ddd;
+            cursor: col-resize;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+        .sandwitch-divider:hover {
+            background: #999;
+        }
+        .sandwitch-right {
+            flex: 1;
+            overflow: auto;
+            background: white;
+            display: flex;
+            flex-direction: column;
+        }
+        .sandwitch-graph {
+            flex: 1;
+            overflow: auto;
+            border-bottom: 1px solid #ddd;
+        }
+        .sandwitch-graph:last-child {
+            border-bottom: none;
+        }
+        .sandwitch-graph-label {
+            padding: 8px 12px;
+            background: #f5f5f5;
+            font-weight: 600;
+            font-size: 12px;
+            color: #666;
+            border-bottom: 1px solid #ddd;
+        }
+        .sandwitch-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .sandwitch-table thead {
+            background: #f5f5f5;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .sandwitch-table th {
+            padding: 10px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .sandwitch-table th:hover {
+            background: #e9e9e9;
+        }
+        .sandwitch-table th.sortable::after {
+            content: ' ▼';
+            font-size: 11px;
+            opacity: 0.3;
+        }
+        .sandwitch-table th.sorted-asc::after {
+            content: ' ▲';
+            opacity: 1;
+        }
+        .sandwitch-table th.sorted-desc::after {
+            content: ' ▼';
+            opacity: 1;
+        }
+        .sandwitch-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .sandwitch-table tbody tr {
+            cursor: pointer;
+            transition: background-color 0.15s;
+        }
+        .sandwitch-table tbody tr:hover {
+            background: #f9f9f9;
+        }
+        .sandwitch-table tbody tr.selected {
+            background: #e3f2fd;
+        }
+        .sandwitch-section-header {
+            background: #f5f5f5;
+            font-weight: 600;
+            font-size: 12px;
+            padding: 8px 10px !important;
+            color: #666;
+            cursor: default !important;
+        }
+        .sandwitch-section-header:hover {
+            background: #f5f5f5 !important;
+        }
+        .sandwitch-table .function-name {
+            font-family: 'Courier New', monospace;
+            color: #0066cc;
+            word-break: break-all;
+        }
+        .sandwitch-table .metric {
+            text-align: right;
+            white-space: nowrap;
+        }
+        .graph-mode-controls {
+            margin-left: auto;
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+        .graph-mode-btn {
+            background: white;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px 4px 0 0;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #555;
+            transition: background-color 0.15s;
+        }
+        .graph-mode-btn:hover {
+            background: #d0d7de;
+        }
+        .graph-mode-btn.active {
+            background: #2c3e50;
+            color: white;
+            border-color: #2c3e50;
+        }
     </style>
 </head>
 <body>
@@ -278,6 +420,7 @@
                     <label for="view-select">View:</label>
                     <select id="view-select">
                         <option value="flamegraph">Flame Graph</option>
+                        <option value="sandwitch">Sandwitch</option>
                         <option value="heatmap">Flamescope</option>
                     </select>
                 </div>
@@ -407,7 +550,7 @@
             viewMode = selectedMode;
             const filterContainer = document.getElementById('filter-container');
             const sortFilter = document.getElementById('sort-mode-filter');
-            if (viewMode === 'heatmap') {
+            if (viewMode === 'heatmap' || viewMode === 'sandwitch') {
                 if (isPaused) filterContainer.classList.remove('visible');
                 sortFilter.style.display = 'none';
             } else {
@@ -574,6 +717,8 @@ function applyFrameFilter() {
 
             if (viewMode === 'heatmap') {
                 fetchAndRenderHeatMap(query);
+            } else if (viewMode === 'sandwitch') {
+                fetchAndRenderSandwitch(query);
             } else {
                 fetchAndRenderFlamegraph(query);
             }
@@ -911,6 +1056,839 @@ function applyFrameFilter() {
             g.append('text').attr('x', legendX + legendW).attr('y', legendY - 2)
                 .attr('text-anchor', 'end')
                 .attr('font-size', '10px').attr('fill', '#555').text(d.maxValue);
+        }
+
+        let sandwitchData = null;
+        let sandwitchSortColumn = 'total';
+        let sandwitchSortAsc = false;
+        let selectedFunctionName = null;
+        let sandwitchGraphMode = 'callers';
+
+        function fetchAndRenderSandwitch(query) {
+            fetch(window.__BASE_PATH__ + '/api/sandwitch' + query)
+                .then(r => r.json())
+                .then(sandwitches => {
+                    currentGraphs = sandwitches;
+                    const strip  = document.getElementById('tab-strip');
+                    const charts = document.getElementById('charts');
+
+                    const noData = !sandwitches || sandwitches.length === 0 ||
+                                   sandwitches.every(s => !s.data || !s.data.functions || s.data.functions.length === 0);
+
+                    if (noData) {
+                        strip.style.display  = 'none';
+                        charts.innerHTML     = '<div class="waiting">Waiting for profiles...</div>';
+                        return;
+                    }
+
+                    if (activeTab === null || !sandwitches.find(s => s.type === activeTab)) {
+                        activeTab = sandwitches[0].type;
+                    }
+
+                    strip.style.display = 'flex';
+                    strip.innerHTML = '';
+                    sandwitches.forEach(s => {
+                        const btn   = document.createElement('button');
+                        btn.className  = 'tab-btn' + (s.type === activeTab ? ' active' : '');
+                        btn.textContent = s.type;
+                        btn.dataset.type = s.type;
+                        btn.addEventListener('click', () => {
+                            activeTab = s.type;
+                            document.querySelectorAll('.tab-btn').forEach(
+                                b => b.classList.toggle('active', b.dataset.type === activeTab)
+                            );
+                            document.querySelectorAll('.tab-panel').forEach(
+                                p => p.classList.toggle('active', p.id === 'panel-' + sanitizeId(activeTab))
+                            );
+                        });
+                        strip.appendChild(btn);
+                    });
+
+                    // Graph mode controls removed - using single DAG view instead
+
+                    charts.innerHTML = '';
+                    sandwitches.forEach(s => {
+                        const panel = document.createElement('div');
+                        const panelId = 'panel-' + sanitizeId(s.type);
+                        panel.className = 'tab-panel sandwitch-container' + (s.type === activeTab ? ' active' : '');
+                        panel.id = panelId;
+                        charts.appendChild(panel);
+
+                        if (s.data && s.data.functions && s.data.functions.length > 0) {
+                            setTimeout(() => renderSandwitchView(panelId, s.data), 0);
+                        } else {
+                            panel.innerHTML = '<div class="waiting">No data for ' + s.type + '</div>';
+                        }
+                    });
+
+                    document.getElementById('last-update').textContent =
+                        new Date().toLocaleTimeString();
+                })
+                .catch(err => {
+                    document.getElementById('charts').innerHTML =
+                        '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                });
+        }
+
+        function renderSandwitchView(containerId, data) {
+            sandwitchData = data;
+            selectedFunctionName = null;
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            container.innerHTML = '';
+
+            const leftPanel = document.createElement('div');
+            leftPanel.className = 'sandwitch-left';
+            leftPanel.id = 'sandwitch-left-' + containerId;
+
+            const divider = document.createElement('div');
+            divider.className = 'sandwitch-divider';
+            divider.id = 'sandwitch-divider-' + containerId;
+
+            const rightPanel = document.createElement('div');
+            rightPanel.className = 'sandwitch-right';
+            rightPanel.id = 'sandwitch-right-' + containerId;
+
+            container.appendChild(leftPanel);
+            container.appendChild(divider);
+            container.appendChild(rightPanel);
+
+            renderSandwitchTable(leftPanel);
+            renderSandwitchGraphPlaceholder(rightPanel);
+
+            setupSandwitchDivider(divider, leftPanel);
+        }
+
+        function renderSandwitchGraphPlaceholder(container) {
+            container.innerHTML = '<div class="waiting">Please select a function.</div>';
+        }
+
+        function fetchSandwitchDetail(functionName, sampleType, resourceType, rightPanel) {
+            let query = '?functionName=' + encodeURIComponent(functionName) + '&sampleType=' + encodeURIComponent(sampleType);
+            if (resourceType) {
+                query += '&resourceType=' + encodeURIComponent(resourceType);
+            }
+
+            fetch(window.__BASE_PATH__ + '/api/sandwitch-detail' + query)
+                .then(r => r.json())
+                .then(data => {
+                    if (data && data[sampleType] && data[sampleType].callers && data[sampleType].callees) {
+                        renderSandwitchGraphs(rightPanel, data[sampleType]);
+                    } else {
+                        rightPanel.innerHTML = '<div class="waiting">No data for this function.</div>';
+                    }
+                })
+                .catch(err => {
+                    rightPanel.innerHTML = '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                });
+        }
+
+        function renderSandwitchGraphs(container, sandwitchData) {
+            container.innerHTML = '';
+            window.currentSandwitchData = sandwitchData;
+
+            // Create DAG section (only one now, replacing separate callers/callees)
+            const dagSection = document.createElement('div');
+            dagSection.className = 'sandwitch-graph';
+            const dagContainer = document.createElement('div');
+            dagContainer.id = 'dag-graph';
+            dagContainer.style.height = '100%';
+            dagSection.appendChild(dagContainer);
+
+            container.appendChild(dagSection);
+
+            // Render DAG (shown by default)
+            renderDAGGraph(dagContainer, sandwitchData);
+        }
+
+        function renderSandwitchTable(container) {
+            if (!sandwitchData || !sandwitchData.functions) return;
+
+            const functions = [...sandwitchData.functions];
+            sortSandwitchFunctions(functions);
+
+            const table = document.createElement('table');
+            table.className = 'sandwitch-table';
+
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+
+            const createHeader = (text, sortKey) => {
+                const th = document.createElement('th');
+                th.className = 'sortable';
+                th.textContent = text;
+                if (sortKey === sandwitchSortColumn) {
+                    th.classList.add(sandwitchSortAsc ? 'sorted-asc' : 'sorted-desc');
+                }
+                th.addEventListener('click', () => {
+                    if (sandwitchSortColumn === sortKey) {
+                        sandwitchSortAsc = !sandwitchSortAsc;
+                    } else {
+                        sandwitchSortColumn = sortKey;
+                        sandwitchSortAsc = false;
+                    }
+                    renderSandwitchTable(container);
+                });
+                return th;
+            };
+
+            headerRow.appendChild(createHeader('Symbol', 'name'));
+            headerRow.appendChild(createHeader('Self', 'self'));
+            headerRow.appendChild(createHeader('Total', 'total'));
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            functions.forEach(fn => {
+                const row = document.createElement('tr');
+                row.classList.toggle('selected', fn.name === selectedFunctionName);
+                row.addEventListener('click', () => {
+                    selectedFunctionName = fn.name;
+                    renderSandwitchTable(container);
+
+                    const rightPanel = document.getElementById('sandwitch-right-' + container.parentElement.id);
+                    fetchSandwitchDetail(fn.name, activeTab, selectedResourceType, rightPanel);
+                });
+
+                const nameCell = document.createElement('td');
+                nameCell.className = 'function-name';
+                nameCell.textContent = fn.name;
+                row.appendChild(nameCell);
+
+                const selfCell = document.createElement('td');
+                selfCell.className = 'metric';
+                selfCell.textContent = formatTime(fn.self);
+                row.appendChild(selfCell);
+
+                const totalCell = document.createElement('td');
+                totalCell.className = 'metric';
+                totalCell.textContent = formatTime(fn.total);
+                row.appendChild(totalCell);
+
+                tbody.appendChild(row);
+            });
+
+            table.appendChild(tbody);
+            container.innerHTML = '';
+            container.appendChild(table);
+        }
+
+        function formatTime(value) {
+            return Math.round(value).toString();
+        }
+
+        function renderDAGGraph(container, sandwitchData) {
+            if (!sandwitchData || !container) return;
+            container.innerHTML = '';
+
+            const width = container.clientWidth;
+            const height = Math.max(300, container.clientHeight - 40);
+
+            // Build node and link data
+            let selectedName = null;
+            let callersRoot = null;
+            let calleesRoot = null;
+
+            if (sandwitchData.callers) {
+                selectedName = sandwitchData.callers.name;
+                callersRoot = sandwitchData.callers;
+            }
+            if (sandwitchData.callees) {
+                if (!selectedName) selectedName = sandwitchData.callees.name;
+                calleesRoot = sandwitchData.callees;
+            }
+
+            if (!selectedName) return;
+
+            const nodes = [];
+            const links = [];
+            const nodeMap = new Map();
+
+            // Add center node (selected frame)
+            const centerNode = { id: 'center', name: selectedName, type: 'center', value: null, x: width / 2, y: height / 2 };
+            nodes.push(centerNode);
+            nodeMap.set('center', centerNode);
+
+            // Helper to flatten tree and limit depth to 5
+            function addNodesFromTree(root, isCallers, maxDepth = 5) {
+                if (!root || !root.children) return;
+
+                const nodesByDepth = [];
+
+                function traverse(node, depth, parentId) {
+                    if (depth > maxDepth || !node) return;
+
+                    const key = `${isCallers ? 'C' : 'E'}_${depth}_${parentId}_${node.name}`;
+                    let currentNode;
+
+                    if (!nodeMap.has(key)) {
+                        currentNode = {
+                            id: key,
+                            name: node.name,
+                            type: isCallers ? 'caller' : 'callee',
+                            value: node.value,
+                            depth: depth,
+                            frameType: node.l || node.libtype || node.FrameType || '',
+                            l: node.l,
+                            libtype: node.libtype
+                        };
+                        nodes.push(currentNode);
+                        nodeMap.set(key, currentNode);
+                        if (!nodesByDepth[depth]) nodesByDepth[depth] = [];
+                        nodesByDepth[depth].push(currentNode);
+                    } else {
+                        currentNode = nodeMap.get(key);
+                    }
+
+                    // Add link
+                    links.push({ source: isCallers ? currentNode.id : parentId, target: isCallers ? parentId : currentNode.id });
+
+                    // Recursively add children (limit to 5 per frame)
+                    if (node.children) {
+                        node.children.slice(0, 5).forEach(child => {
+                            traverse(child, depth + 1, currentNode.id);
+                        });
+                    }
+                }
+
+                // Start traversal from root's children (limit to 5 immediate callers/callees)
+                if (root.children) {
+                    root.children.slice(0, 5).forEach(child => {
+                        traverse(child, 1, 'center');
+                    });
+                }
+            }
+
+            // Add callers (flowing up to the selected frame)
+            if (callersRoot) {
+                addNodesFromTree(callersRoot, true, 5);
+            }
+
+            // Add callees (flowing down from the selected frame)
+            if (calleesRoot) {
+                addNodesFromTree(calleesRoot, false, 5);
+            }
+
+            if (nodes.length <= 1) {
+                container.innerHTML = '<div class="status-box">No callers or callees to display</div>';
+                return;
+            }
+
+            // Calculate positions using a simple tree layout
+            const nodeWidth = 280;
+            const charWidth = 7;
+            const verticalSpacing = 80;
+            const horizontalSpacing = 340;
+
+            // Helper function to wrap text and calculate required height
+            function calculateTextLines(text, maxWidth) {
+                const maxChars = Math.floor(maxWidth / charWidth);
+                if (text.length <= maxChars) return [text];
+
+                const lines = [];
+                let currentLine = '';
+                const words = text.split(/([._-])/);
+
+                for (const word of words) {
+                    if ((currentLine + word).length <= maxChars) {
+                        currentLine += word;
+                    } else {
+                        if (currentLine) lines.push(currentLine);
+                        currentLine = word;
+                    }
+                }
+                if (currentLine) lines.push(currentLine);
+                return lines;
+            }
+
+            // Calculate node heights based on text content
+            const lineHeight = 14;
+            const nodePaddingV = 8;
+            const sidePadding = 5;
+            nodes.forEach(n => {
+                const lines = calculateTextLines(n.name, nodeWidth - sidePadding * 2);
+                n.textLines = lines;
+                n.nodeHeight = Math.max(40, lines.length * lineHeight + nodePaddingV * 2);
+            });
+
+            const nodeHeight = 40;
+
+            // Group nodes by type and depth
+            const callersByDepth = {};
+            const calleesByDepth = {};
+
+            nodes.forEach(n => {
+                if (n.type === 'center') return;
+                const depth = n.depth || 1;
+                if (n.type === 'caller') {
+                    if (!callersByDepth[depth]) callersByDepth[depth] = [];
+                    callersByDepth[depth].push(n);
+                } else {
+                    if (!calleesByDepth[depth]) calleesByDepth[depth] = [];
+                    calleesByDepth[depth].push(n);
+                }
+            });
+
+            // Position callers (above center)
+            Object.keys(callersByDepth).sort().reverse().forEach(d => {
+                const depth = parseInt(d);
+                const nodesAtDepth = callersByDepth[d];
+                const numNodes = nodesAtDepth.length;
+                const y = centerNode.y - depth * verticalSpacing;
+                const totalWidth = numNodes * horizontalSpacing;
+                const startX = width / 2 - totalWidth / 2;
+
+                nodesAtDepth.forEach((n, i) => {
+                    n.x = startX + i * horizontalSpacing;
+                    n.y = y;
+                });
+            });
+
+            // Position callees (below center)
+            Object.keys(calleesByDepth).sort().forEach(d => {
+                const depth = parseInt(d);
+                const nodesAtDepth = calleesByDepth[d];
+                const numNodes = nodesAtDepth.length;
+                const y = centerNode.y + depth * verticalSpacing;
+                const totalWidth = numNodes * horizontalSpacing;
+                const startX = width / 2 - totalWidth / 2;
+
+                nodesAtDepth.forEach((n, i) => {
+                    n.x = startX + i * horizontalSpacing;
+                    n.y = y;
+                });
+            });
+
+            // Calculate bounds of all nodes and center the DAG
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            nodes.forEach(n => {
+                minX = Math.min(minX, n.x - nodeWidth / 2);
+                maxX = Math.max(maxX, n.x + nodeWidth / 2);
+                minY = Math.min(minY, n.y - n.nodeHeight / 2);
+                maxY = Math.max(maxY, n.y + n.nodeHeight / 2);
+            });
+
+            // Calculate offset to center the DAG
+            const padding = 40;
+            const graphWidth = maxX - minX + padding * 2;
+            const graphHeight = maxY - minY + padding * 2;
+            const offsetX = (width - graphWidth) / 2 - minX + padding;
+            const offsetY = (height - graphHeight) / 2 - minY + padding;
+
+            // Apply offset to all nodes
+            nodes.forEach(n => {
+                n.x += offsetX;
+                n.y += offsetY;
+            });
+
+            // Create SVG
+            const svg = d3.select(container).append('svg')
+                .attr('width', width)
+                .attr('height', height)
+                .style('background-color', 'white');
+
+            // Create a group for zoom/pan
+            const g = svg.append('g');
+
+            // Define arrow markers
+            svg.append('defs').append('marker')
+                .attr('id', 'arrowhead')
+                .attr('markerWidth', 10)
+                .attr('markerHeight', 10)
+                .attr('refX', 9)
+                .attr('refY', 3)
+                .attr('orient', 'auto')
+                .append('polygon')
+                .attr('points', '0 0, 10 3, 0 6')
+                .attr('fill', '#666');
+
+            // Draw links
+            g.selectAll('line.link')
+                .data(links)
+                .join('line')
+                .attr('class', 'link')
+                .attr('x1', d => {
+                    const sourceNode = nodeMap.get(d.source);
+                    return sourceNode.x;
+                })
+                .attr('y1', d => {
+                    const sourceNode = nodeMap.get(d.source);
+                    return sourceNode.y + sourceNode.nodeHeight / 2;
+                })
+                .attr('x2', d => {
+                    const targetNode = nodeMap.get(d.target);
+                    return targetNode.x;
+                })
+                .attr('y2', d => {
+                    const targetNode = nodeMap.get(d.target);
+                    return targetNode.y - targetNode.nodeHeight / 2;
+                })
+                .attr('stroke', '#999')
+                .attr('stroke-width', 2)
+                .attr('marker-end', 'url(#arrowhead)');
+
+            // Draw nodes
+            const nodes_g = g.selectAll('g.node')
+                .data(nodes)
+                .join('g')
+                .attr('class', 'node')
+                .attr('transform', d => `translate(${d.x},${d.y})`);
+
+            // Color mapper for frame types (same as flamegraph)
+            const colorMapper = function(d) {
+                if (d.type === 'center') return '#2c3e50';
+
+                const frameType = d.frameType || d.l || d.libtype || '';
+                if (!frameType) {
+                    // Default color for unknown types
+                    return '#cccccc';
+                }
+
+                const name = d.name || '';
+                let s = 0;
+                const sym = name.split('(')[0];
+                if (sym) {
+                    let sum = 0, weight = 0, w = 1;
+                    for (let i = 0; i < sym.length && i <= 6; i++) {
+                        sum += w * (sym.charCodeAt(i) % 10);
+                        weight += 9 * w;
+                        w *= 0.7;
+                    }
+                    if (weight > 0) s = sum / weight;
+                }
+                const c = (b, r) => b + Math.round(r * s);
+                switch (frameType) {
+                    case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
+                    case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
+                    case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
+                    case 'jvm': return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
+                    case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
+                    case 'v8js': return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
+                    case 'ruby': return `rgb(${c(190,65)},${c(90,65)},0)`;
+                    case 'perl': return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
+                    case 'php': return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
+                    case 'beam': return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
+                    case 'go': return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
+                    case 'rust': return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
+                    default: return '#cccccc';
+                }
+            };
+
+            nodes_g.append('rect')
+                .attr('width', nodeWidth)
+                .attr('height', d => d.nodeHeight)
+                .attr('x', -nodeWidth / 2)
+                .attr('y', d => -d.nodeHeight / 2)
+                .attr('fill', colorMapper)
+                .attr('stroke', '#333')
+                .attr('stroke-width', 1)
+                .attr('rx', 4);
+
+            nodes_g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'middle')
+                .attr('font-size', '12px')
+                .attr('font-family', 'monospace')
+                .attr('fill', d => d.type === 'center' ? 'white' : '#000')
+                .attr('pointer-events', 'none')
+                .attr('y', d => {
+                    const numLines = d.textLines ? d.textLines.length : 1;
+                    return -(numLines - 1) * lineHeight / 2;
+                })
+                .selectAll('tspan')
+                .data(d => d.textLines || [d.name])
+                .join('tspan')
+                .attr('x', 0)
+                .attr('dy', (d, i) => i === 0 ? 0 : lineHeight)
+                .text(d => d);
+
+            // Add zoom behavior
+            const zoom = d3.zoom()
+                .on('zoom', (event) => {
+                    g.attr('transform', event.transform);
+                });
+
+            svg.call(zoom);
+
+            // Add tooltip
+            const tooltip = d3.select(container).append('div')
+                .style('position', 'absolute')
+                .style('background', 'rgba(0, 0, 0, 0.8)')
+                .style('color', 'white')
+                .style('padding', '8px 12px')
+                .style('border-radius', '4px')
+                .style('font-size', '11px')
+                .style('font-family', 'monospace')
+                .style('pointer-events', 'none')
+                .style('display', 'none')
+                .style('z-index', '1000')
+                .style('max-width', '400px')
+                .style('word-break', 'break-all');
+
+            nodes_g.on('mouseover', function(event, d) {
+                tooltip.style('display', 'block')
+                    .style('left', (event.pageX + 12) + 'px')
+                    .style('top', (event.pageY - 28) + 'px')
+                    .html(`<strong>${d.name}</strong><br/>` +
+                          (d.value ? `Samples: ${Math.round(d.value)}` : ''));
+            })
+            .on('mouseleave', () => {
+                tooltip.style('display', 'none');
+            });
+        }
+
+        function renderIcicleGraph(container, root) {
+            if (!root || !container) return;
+            container.innerHTML = '';
+
+            const width = container.clientWidth;
+            const height = Math.max(200, container.clientHeight - 40);
+
+            // Build hierarchy
+            const hierarchy = d3.hierarchy(root)
+                .sum(d => d.value)
+                .sort((a, b) => b.value - a.value);
+
+            // Create partition layout
+            const partition = d3.partition()
+                .size([width, height]);
+
+            const nodes = partition(hierarchy).descendants();
+
+            // Create SVG
+            const svg = d3.select(container).append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // Same color mapper as flamegraph
+            const colorMapper = function(d) {
+                if (d.data.name === 'root') return '#2c3e50';
+                const originalColor = d3.schemeCategory10[d.depth % 10];
+                const frameType = d.data.l || d.data.libtype || '';
+                if (!frameType) return originalColor;
+
+                const name = d.data.name || '';
+                let s = 0;
+                const sym = name.split('(')[0];
+                if (sym) {
+                    let sum = 0, weight = 0, w = 1;
+                    for (let i = 0; i < sym.length && i <= 6; i++) {
+                        sum += w * (sym.charCodeAt(i) % 10);
+                        weight += 9 * w;
+                        w *= 0.7;
+                    }
+                    if (weight > 0) s = sum / weight;
+                }
+                const c = (b, r) => b + Math.round(r * s);
+                switch (frameType) {
+                    case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
+                    case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
+                    case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
+                    case 'jvm': return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
+                    case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
+                    case 'v8js': return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
+                    case 'ruby': return `rgb(${c(190,65)},${c(90,65)},0)`;
+                    case 'perl': return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
+                    case 'php': return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
+                    case 'beam': return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
+                    case 'go': return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
+                    case 'rust': return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
+                    default: return originalColor;
+                }
+            };
+
+            // Add rectangles for each node
+            svg.selectAll('rect')
+                .data(nodes)
+                .join('rect')
+                .attr('x', d => d.x0)
+                .attr('y', d => d.y0)
+                .attr('width', d => d.x1 - d.x0)
+                .attr('height', d => d.y1 - d.y0)
+                .attr('fill', colorMapper)
+                .attr('stroke', '#fff')
+                .attr('stroke-width', '1px');
+
+            // Add labels (only if there's enough space)
+            svg.selectAll('text')
+                .data(nodes.filter(d => (d.x1 - d.x0) > 40 && (d.y1 - d.y0) > 18))
+                .join('text')
+                .attr('x', d => d.x0 + 4)
+                .attr('y', d => d.y0 + (d.y1 - d.y0) / 2)
+                .attr('font-size', '13px')
+                .attr('font-family', 'monospace')
+                .attr('fill', '#000')
+                .attr('pointer-events', 'none')
+                .attr('text-anchor', 'start')
+                .attr('dominant-baseline', 'middle')
+                .text(d => {
+                    const name = d.data.name || '';
+                    const availableWidth = d.x1 - d.x0 - 8;
+                    const charWidth = 7.8;
+                    const maxChars = Math.floor(availableWidth / charWidth);
+                    return maxChars > name.length ? name : name.substring(0, Math.max(0, maxChars - 3)) + '...';
+                });
+
+            // Add tooltip
+            const tooltip = d3.select(container).append('div')
+                .style('position', 'absolute')
+                .style('background', 'rgba(0, 0, 0, 0.8)')
+                .style('color', 'white')
+                .style('padding', '8px 12px')
+                .style('border-radius', '4px')
+                .style('font-size', '12px')
+                .style('font-family', 'monospace')
+                .style('pointer-events', 'none')
+                .style('display', 'none')
+                .style('z-index', '1000')
+                .style('max-width', '300px');
+
+            svg.selectAll('rect')
+                .on('mousemove', function(event, d) {
+                    const pct = d3.format('.3f')(100 * (d.x1 - d.x0));
+                    const value = d.value;
+                    tooltip.style('display', 'block')
+                        .style('left', (event.pageX + 12) + 'px')
+                        .style('top', (event.pageY - 28) + 'px')
+                        .html(`<strong>${d.data.name}</strong><br/>Samples: ${Math.round(value)} (${pct}%)`);
+                })
+                .on('mouseleave', () => {
+                    tooltip.style('display', 'none');
+                });
+        }
+
+        function sortSandwitchFunctions(functions) {
+            functions.sort((a, b) => {
+                let aVal, bVal;
+                if (sandwitchSortColumn === 'name') {
+                    aVal = a.name;
+                    bVal = b.name;
+                    const cmp = aVal.localeCompare(bVal);
+                    return sandwitchSortAsc ? cmp : -cmp;
+                } else {
+                    aVal = sandwitchSortColumn === 'self' ? a.self : a.total;
+                    bVal = sandwitchSortColumn === 'self' ? b.self : b.total;
+                    const diff = aVal - bVal;
+                    return sandwitchSortAsc ? diff : -diff;
+                }
+            });
+        }
+
+        function filterSandwitchForFunction(root, functionName) {
+            if (!root) return root;
+            return filterFlameNode(root, functionName);
+        }
+
+        function filterFlameNode(node, targetName) {
+            if (!node) return null;
+
+            const newNode = {
+                name: node.name,
+                value: node.value,
+                children: [],
+                childrenMap: {}
+            };
+
+            if (node.name === targetName) {
+                newNode.children = node.children ? [...node.children] : [];
+                return newNode;
+            }
+
+            if (node.children) {
+                for (const child of node.children) {
+                    const filtered = filterFlameNode(child, targetName);
+                    if (filtered) {
+                        newNode.children.push(filtered);
+                    }
+                }
+            }
+
+            return newNode.children.length > 0 ? newNode : null;
+        }
+
+        function renderSandwitchGraph(container, root) {
+            if (!root || !container) return;
+            container.innerHTML = '';
+
+            const width = container.clientWidth;
+            const height = Math.max(200, container.clientHeight - 40);
+
+            const fg = flamegraph.default()
+                .width(width)
+                .height(height)
+                .setLabelHandler(function(d) {
+                    const name = d.data.name || d.data.n || '';
+                    const pct = d3.format('.3f')(100 * (d.x1 - d.x0));
+                    const samples = ('v' in d) ? d.v : d.value;
+                    return name + ' (' + pct + '%, ' + samples + ' samples)';
+                })
+                .setColorMapper(function(d, originalColor) {
+                    if (originalColor === '#E600E6') return originalColor;
+                    const frameType = d.data.l || d.data.libtype || '';
+                    if (!frameType) return originalColor;
+                    const name = d.data.name || '';
+                    let s = 0;
+                    const sym = name.split('(')[0];
+                    if (sym) {
+                        let sum = 0, weight = 0, w = 1;
+                        for (let i = 0; i < sym.length && i <= 6; i++) {
+                            sum += w * (sym.charCodeAt(i) % 10);
+                            weight += 9 * w;
+                            w *= 0.7;
+                        }
+                        if (weight > 0) s = sum / weight;
+                    }
+                    const c = (b, r) => b + Math.round(r * s);
+                    switch (frameType) {
+                        case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
+                        case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
+                        case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
+                        case 'jvm':    return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
+                        case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
+                        case 'v8js':   return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
+                        case 'ruby':   return `rgb(${c(190,65)},${c(90,65)},0)`;
+                        case 'perl':   return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
+                        case 'php':    return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
+                        case 'beam':   return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
+                        case 'go':     return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
+                        case 'rust':   return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
+                        default:       return originalColor;
+                    }
+                });
+
+            const selection = d3.select(container);
+            selection.datum(root).call(fg);
+        }
+
+        function setupSandwitchDivider(divider, leftPanel) {
+            let isResizing = false;
+            let startX = 0;
+            let startWidth = 0;
+
+            divider.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = leftPanel.clientWidth;
+                document.body.style.userSelect = 'none';
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                const delta = e.clientX - startX;
+                const newWidth = Math.max(200, startWidth + delta);
+                const container = divider.parentElement;
+                const maxWidth = Math.max(200, container.clientWidth - 200);
+                if (newWidth <= maxWidth) {
+                    leftPanel.style.flex = `0 0 ${newWidth}px`;
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                isResizing = false;
+                document.body.style.userSelect = '';
+            });
         }
 
         function init() {
