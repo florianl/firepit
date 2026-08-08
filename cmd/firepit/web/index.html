@@ -420,7 +420,7 @@
                     <label for="view-select">View:</label>
                     <select id="view-select">
                         <option value="flamegraph">Flame Graph</option>
-                        <option value="sandwitch">Sandwich</option>
+                        <option value="sandwitch">Sandwitch</option>
                         <option value="heatmap">Flamescope</option>
                     </select>
                 </div>
@@ -718,7 +718,7 @@ function applyFrameFilter() {
             if (viewMode === 'heatmap') {
                 fetchAndRenderHeatMap(query);
             } else if (viewMode === 'sandwitch') {
-                fetchAndRenderSandwich(query);
+                fetchAndRenderSandwitch(query);
             } else {
                 fetchAndRenderFlamegraph(query);
             }
@@ -1064,7 +1064,7 @@ function applyFrameFilter() {
         let selectedFunctionName = null;
         let sandwitchGraphMode = 'callers';
 
-        function fetchAndRenderSandwich(query) {
+        function fetchAndRenderSandwitch(query) {
             fetch(window.__BASE_PATH__ + '/api/sandwitch' + query)
                 .then(r => r.json())
                 .then(sandwitches => {
@@ -1115,7 +1115,7 @@ function applyFrameFilter() {
                         charts.appendChild(panel);
 
                         if (s.data && s.data.functions && s.data.functions.length > 0) {
-                            setTimeout(() => renderSandwichView(panelId, s.data), 0);
+                            setTimeout(() => renderSandwitchView(panelId, s.data), 0);
                         } else {
                             panel.innerHTML = '<div class="waiting">No data for ' + s.type + '</div>';
                         }
@@ -1130,7 +1130,7 @@ function applyFrameFilter() {
                 });
         }
 
-        function renderSandwichView(containerId, data) {
+        function renderSandwitchView(containerId, data) {
             sandwitchData = data;
             selectedFunctionName = null;
             const container = document.getElementById(containerId);
@@ -1154,13 +1154,13 @@ function applyFrameFilter() {
             container.appendChild(divider);
             container.appendChild(rightPanel);
 
-            renderSandwichTable(leftPanel);
-            renderSandwichGraphPlaceholder(rightPanel);
+            renderSandwitchTable(leftPanel);
+            renderSandwitchGraphPlaceholder(rightPanel);
 
-            setupSandwichDivider(divider, leftPanel);
+            setupSandwitchDivider(divider, leftPanel);
         }
 
-        function renderSandwichGraphPlaceholder(container) {
+        function renderSandwitchGraphPlaceholder(container) {
             container.innerHTML = '<div class="waiting">Please select a function.</div>';
         }
 
@@ -1202,11 +1202,11 @@ function applyFrameFilter() {
             renderDAGGraph(dagContainer, sandwitchData);
         }
 
-        function renderSandwichTable(container) {
+        function renderSandwitchTable(container) {
             if (!sandwitchData || !sandwitchData.functions) return;
 
             const functions = [...sandwitchData.functions];
-            sortSandwichFunctions(functions);
+            sortSandwitchFunctions(functions);
 
             const table = document.createElement('table');
             table.className = 'sandwitch-table';
@@ -1228,7 +1228,7 @@ function applyFrameFilter() {
                         sandwitchSortColumn = sortKey;
                         sandwitchSortAsc = false;
                     }
-                    renderSandwichTable(container);
+                    renderSandwitchTable(container);
                 });
                 return th;
             };
@@ -1245,7 +1245,7 @@ function applyFrameFilter() {
                 row.classList.toggle('selected', fn.name === selectedFunctionName);
                 row.addEventListener('click', () => {
                     selectedFunctionName = fn.name;
-                    renderSandwichTable(container);
+                    renderSandwitchTable(container);
 
                     const rightPanel = document.getElementById('sandwitch-right-' + container.parentElement.id);
                     fetchSandwitchDetail(fn.name, activeTab, selectedResourceType, rightPanel);
@@ -1759,7 +1759,7 @@ function applyFrameFilter() {
                 });
         }
 
-        function sortSandwichFunctions(functions) {
+        function sortSandwitchFunctions(functions) {
             functions.sort((a, b) => {
                 let aVal, bVal;
                 if (sandwitchSortColumn === 'name') {
@@ -1776,7 +1776,7 @@ function applyFrameFilter() {
             });
         }
 
-        function filterSandwichForFunction(root, functionName) {
+        function filterSandwitchForFunction(root, functionName) {
             if (!root) return root;
             return filterFlameNode(root, functionName);
         }
@@ -1808,7 +1808,7 @@ function applyFrameFilter() {
             return newNode.children.length > 0 ? newNode : null;
         }
 
-        function renderSandwichGraph(container, root) {
+        function renderSandwitchGraph(container, root) {
             if (!root || !container) return;
             container.innerHTML = '';
 
@@ -1862,7 +1862,7 @@ function applyFrameFilter() {
             selection.datum(root).call(fg);
         }
 
-        function setupSandwichDivider(divider, leftPanel) {
+        function setupSandwitchDivider(divider, leftPanel) {
             let isResizing = false;
             let startX = 0;
             let startWidth = 0;

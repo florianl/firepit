@@ -275,7 +275,7 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 
 	mux.HandleFunc(base+"/api/flamegraph", handleFlamegraph(st))
 	mux.HandleFunc(base+"/api/flamescope", handleFlamescope(st))
-	mux.HandleFunc(base+"/api/sandwitch", handleSandwich(st))
+	mux.HandleFunc(base+"/api/sandwitch", handleSandwitch(st))
 	mux.HandleFunc(base+"/api/sandwitch-detail", handleSandwitchDetail(st))
 	mux.HandleFunc(base+"/api/profiles", handleProfiles(st))
 	mux.HandleFunc(base+"/api/resource-types", handleResourceTypes(st))
@@ -418,7 +418,7 @@ func handleResourceTypes(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleSandwich(st *store.Store) http.HandlerFunc {
+func handleSandwitch(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
