@@ -323,17 +323,6 @@ type SandwitchGraphs struct {
 	Callees *FlameNode `json:"callees"`
 }
 
-// ExtractSandwitchForFunction builds caller and callee flamegraphs for a target function
-func ExtractSandwitchForFunction(root *FlameNode, targetName string) *FlameNode {
-	// For backward compatibility, return the combined view
-	// (deprecated - use ExtractSandwitchGraphs instead)
-	sg := ExtractSandwitchGraphs(root, targetName)
-	if sg.Callers != nil {
-		return sg.Callers
-	}
-	return root
-}
-
 // ExtractSandwitchGraphs builds separate caller and callee flamegraphs for a target function
 func ExtractSandwitchGraphs(root *FlameNode, targetName string) *SandwitchGraphs {
 	if root == nil || targetName == "" {
