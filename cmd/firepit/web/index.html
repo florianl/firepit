@@ -94,6 +94,9 @@
         .tab-panel.active {
             display: flex;
         }
+        .tab-panel.sandwitch-container:not(.active) {
+            display: none !important;
+        }
         .header-controls {
             display: flex;
             align-items: center;
@@ -1100,6 +1103,7 @@ function applyFrameFilter() {
                         btn.dataset.type = s.type;
                         btn.addEventListener('click', () => {
                             activeTab = s.type;
+                            selectedFunctionName = null;
                             document.querySelectorAll('.tab-btn').forEach(
                                 b => b.classList.toggle('active', b.dataset.type === activeTab)
                             );
@@ -1137,7 +1141,6 @@ function applyFrameFilter() {
         }
 
         function renderSandwitchView(containerId, data) {
-            sandwitchData = data;
             selectedFunctionName = null;
             const container = document.getElementById(containerId);
             if (!container) return;
@@ -1160,7 +1163,7 @@ function applyFrameFilter() {
             container.appendChild(divider);
             container.appendChild(rightPanel);
 
-            renderSandwitchTable(leftPanel);
+            renderSandwitchTable(leftPanel, data);
             renderSandwitchGraphPlaceholder(rightPanel);
 
             setupSandwitchDivider(divider, leftPanel);
@@ -1208,10 +1211,13 @@ function applyFrameFilter() {
             renderDAGGraph(dagContainer, sandwitchData);
         }
 
-        function renderSandwitchTable(container) {
-            if (!sandwitchData || !sandwitchData.functions) return;
+        function renderSandwitchTable(container, data) {
+            if (!data || !data.functions) return;
 
-            const functions = [...sandwitchData.functions];
+            // Clear container first to ensure only one table is rendered
+            container.innerHTML = '';
+
+            const functions = [...data.functions];
             sortSandwitchFunctions(functions);
 
             const table = document.createElement('table');
@@ -1234,7 +1240,7 @@ function applyFrameFilter() {
                         sandwitchSortColumn = sortKey;
                         sandwitchSortAsc = false;
                     }
-                    renderSandwitchTable(container);
+                    renderSandwitchTable(container, data);
                 });
                 return th;
             };
@@ -1251,7 +1257,7 @@ function applyFrameFilter() {
                 row.classList.toggle('selected', fn.name === selectedFunctionName);
                 row.addEventListener('click', () => {
                     selectedFunctionName = fn.name;
-                    renderSandwitchTable(container);
+                    renderSandwitchTable(container, data);
 
                     const rightPanel = document.getElementById('sandwitch-right-' + container.parentElement.id);
                     fetchSandwitchDetail(fn.name, activeTab, selectedResourceType, rightPanel);
@@ -1276,7 +1282,6 @@ function applyFrameFilter() {
             });
 
             table.appendChild(tbody);
-            container.innerHTML = '';
             container.appendChild(table);
         }
 

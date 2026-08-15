@@ -337,8 +337,11 @@ func startOTLPHTTPServer(st *store.Store, cfg Config) *http.Server {
 
 func handleFlamegraph(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 			return
 		}
 
@@ -353,15 +356,17 @@ func handleFlamegraph(st *store.Store) http.HandlerFunc {
 			graphs = append(graphs, profiler.NamedFlamegraph{Type: t, Root: root})
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(graphs)
 	}
 }
 
 func handleFlamescope(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 			return
 		}
 
@@ -376,15 +381,17 @@ func handleFlamescope(st *store.Store) http.HandlerFunc {
 			maps = append(maps, profiler.NamedFlamescope{Type: t, Data: hm})
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(maps)
 	}
 }
 
 func handleProfiles(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 			return
 		}
 
@@ -399,29 +406,33 @@ func handleProfiles(st *store.Store) http.HandlerFunc {
 			info["timeRange"] = timeRange
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	}
 }
 
 func handleResourceTypes(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 			return
 		}
 
 		types := st.ResourceTypes()
 
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(types)
 	}
 }
 
 func handleSandwitch(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 			return
 		}
 
@@ -437,9 +448,9 @@ func handleSandwitch(st *store.Store) http.HandlerFunc {
 			sandwitches = append(sandwitches, profiler.NamedSandwitch{Type: t, Data: data})
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(sandwitches); err != nil {
-			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
 			return
 		}
 	}
@@ -447,8 +458,11 @@ func handleSandwitch(st *store.Store) http.HandlerFunc {
 
 func handleSandwitchDetail(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 			return
 		}
 
@@ -457,7 +471,8 @@ func handleSandwitchDetail(st *store.Store) http.HandlerFunc {
 		sampleType := r.URL.Query().Get("sampleType")
 
 		if functionName == "" {
-			http.Error(w, "functionName parameter required", http.StatusBadRequest)
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "functionName parameter required"})
 			return
 		}
 
@@ -480,13 +495,14 @@ func handleSandwitchDetail(st *store.Store) http.HandlerFunc {
 		}
 
 		if !foundInAnyType {
-			http.Error(w, "Function not found", http.StatusNotFound)
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Function not found"})
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(result); err != nil {
-			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
 			return
 		}
 	}
