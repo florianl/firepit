@@ -477,6 +477,25 @@
         let currentHeatMaps = null;
         let sortMode = 'time-ordered';
 
+        function getFrameTypeColor(frameType, saturation) {
+            const c = (b, r) => b + Math.round(r * saturation);
+            switch (frameType) {
+                case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
+                case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
+                case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
+                case 'jvm':    return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
+                case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
+                case 'v8js':   return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
+                case 'ruby':   return `rgb(${c(190,65)},${c(90,65)},0)`;
+                case 'perl':   return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
+                case 'php':    return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
+                case 'beam':   return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
+                case 'go':     return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
+                case 'rust':   return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
+                default:       return null;
+            }
+        }
+
         function applyResourceFilter() {
             selectedResourceType = (selectedAttrKey && selectedAttrValue)
                 ? selectedAttrKey + ':' + selectedAttrValue
@@ -646,22 +665,8 @@ function applyFrameFilter() {
                         }
                         if (weight > 0) s = sum / weight;
                     }
-                    const c = (b, r) => b + Math.round(r * s);
-                    switch (frameType) {
-                        case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
-                        case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
-                        case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
-                        case 'jvm':    return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
-                        case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
-                        case 'v8js':   return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
-                        case 'ruby':   return `rgb(${c(190,65)},${c(90,65)},0)`;
-                        case 'perl':   return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
-                        case 'php':    return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
-                        case 'beam':   return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
-                        case 'go':     return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
-                        case 'rust':   return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
-                        default:       return originalColor;
-                    }
+                    const color = getFrameTypeColor(frameType, s);
+                    return color || originalColor;
                 });
 
             const selection = d3.select('#' + containerId);
@@ -1542,7 +1547,6 @@ function applyFrameFilter() {
 
                 const frameType = d.frameType || d.l || d.libtype || '';
                 if (!frameType) {
-                    // Default color for unknown types
                     return '#cccccc';
                 }
 
@@ -1558,22 +1562,8 @@ function applyFrameFilter() {
                     }
                     if (weight > 0) s = sum / weight;
                 }
-                const c = (b, r) => b + Math.round(r * s);
-                switch (frameType) {
-                    case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
-                    case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
-                    case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
-                    case 'jvm': return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
-                    case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
-                    case 'v8js': return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
-                    case 'ruby': return `rgb(${c(190,65)},${c(90,65)},0)`;
-                    case 'perl': return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
-                    case 'php': return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
-                    case 'beam': return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
-                    case 'go': return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
-                    case 'rust': return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
-                    default: return '#cccccc';
-                }
+                const color = getFrameTypeColor(frameType, s);
+                return color || '#cccccc';
             };
 
             nodes_g.append('rect')
@@ -1720,22 +1710,8 @@ function applyFrameFilter() {
                         }
                         if (weight > 0) s = sum / weight;
                     }
-                    const c = (b, r) => b + Math.round(r * s);
-                    switch (frameType) {
-                        case 'kernel': return `rgb(${c(163,75)},${c(195,49)},${c(72,149)})`;
-                        case 'native': return `rgb(${c(200,55)},${c(50,80)},${c(50,80)})`;
-                        case 'cpython': return `rgb(${c(91,126)},${c(156,76)},${c(221,26)})`;
-                        case 'jvm':    return `rgb(${c(50,60)},${c(200,55)},${c(50,60)})`;
-                        case 'dotnet': return `rgb(${c(150,55)},${c(50,80)},${c(200,40)})`;
-                        case 'v8js':   return `rgb(${c(175,55)},${c(175,55)},${c(50,20)})`;
-                        case 'ruby':   return `rgb(${c(190,65)},${c(90,65)},0)`;
-                        case 'perl':   return `rgb(${c(50,60)},${c(165,55)},${c(165,55)})`;
-                        case 'php':    return `rgb(${c(119,40)},${c(123,40)},${c(179,40)})`;
-                        case 'beam':   return `rgb(${c(220,35)},${c(120,50)},${c(80,40)})`;
-                        case 'go':     return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
-                        case 'rust':   return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
-                        default:       return originalColor;
-                    }
+                    const color = getFrameTypeColor(frameType, s);
+                    return color || originalColor;
                 });
 
             const selection = d3.select(container);
