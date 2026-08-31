@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -19,13 +20,17 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
 		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+		defer r.Body.Close()
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+				http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "Failed to read body", http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
 
 		req := &collectorprofiles.ExportProfilesServiceRequest{}
 		if err := protojson.Unmarshal(body, req); err != nil {
