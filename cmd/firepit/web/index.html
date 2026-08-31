@@ -88,13 +88,13 @@
         .tab-panel {
             display: none;
         }
-        .tab-panel.active:not(.sandwitch-container) {
+        .tab-panel.active:not(.sandwich-container) {
             display: block;
         }
         .tab-panel.active {
             display: flex;
         }
-        .tab-panel.sandwitch-container:not(.active) {
+        .tab-panel.sandwich-container:not(.active) {
             display: none !important;
         }
         .header-controls {
@@ -272,44 +272,44 @@
             display: none;
             z-index: 1000;
         }
-        .sandwitch-container {
+        .sandwich-container {
             display: flex;
             width: 100%;
             height: calc(100vh - 240px);
             min-height: 400px;
         }
-        .sandwitch-left {
+        .sandwich-left {
             flex: 0 0 35%;
             overflow-y: auto;
             border-right: 1px solid #ddd;
             background: white;
         }
-        .sandwitch-divider {
+        .sandwich-divider {
             flex: 0 0 4px;
             background: #ddd;
             cursor: col-resize;
             user-select: none;
             transition: background-color 0.2s;
         }
-        .sandwitch-divider:hover {
+        .sandwich-divider:hover {
             background: #999;
         }
-        .sandwitch-right {
+        .sandwich-right {
             flex: 1;
             overflow: auto;
             background: white;
             display: flex;
             flex-direction: column;
         }
-        .sandwitch-graph {
+        .sandwich-graph {
             flex: 1;
             overflow: auto;
             border-bottom: 1px solid #ddd;
         }
-        .sandwitch-graph:last-child {
+        .sandwich-graph:last-child {
             border-bottom: none;
         }
-        .sandwitch-graph-label {
+        .sandwich-graph-label {
             padding: 8px 12px;
             background: #f5f5f5;
             font-weight: 600;
@@ -317,18 +317,18 @@
             color: #666;
             border-bottom: 1px solid #ddd;
         }
-        .sandwitch-table {
+        .sandwich-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
         }
-        .sandwitch-table thead {
+        .sandwich-table thead {
             background: #f5f5f5;
             position: sticky;
             top: 0;
             z-index: 10;
         }
-        .sandwitch-table th {
+        .sandwich-table th {
             padding: 10px;
             text-align: left;
             font-weight: 600;
@@ -337,37 +337,37 @@
             user-select: none;
             white-space: nowrap;
         }
-        .sandwitch-table th:hover {
+        .sandwich-table th:hover {
             background: #e9e9e9;
         }
-        .sandwitch-table th.sortable::after {
+        .sandwich-table th.sortable::after {
             content: ' ▼';
             font-size: 11px;
             opacity: 0.3;
         }
-        .sandwitch-table th.sorted-asc::after {
+        .sandwich-table th.sorted-asc::after {
             content: ' ▲';
             opacity: 1;
         }
-        .sandwitch-table th.sorted-desc::after {
+        .sandwich-table th.sorted-desc::after {
             content: ' ▼';
             opacity: 1;
         }
-        .sandwitch-table td {
+        .sandwich-table td {
             padding: 8px 10px;
             border-bottom: 1px solid #f0f0f0;
         }
-        .sandwitch-table tbody tr {
+        .sandwich-table tbody tr {
             cursor: pointer;
             transition: background-color 0.15s;
         }
-        .sandwitch-table tbody tr:hover {
+        .sandwich-table tbody tr:hover {
             background: #f9f9f9;
         }
-        .sandwitch-table tbody tr.selected {
+        .sandwich-table tbody tr.selected {
             background: #e3f2fd;
         }
-        .sandwitch-section-header {
+        .sandwich-section-header {
             background: #f5f5f5;
             font-weight: 600;
             font-size: 12px;
@@ -375,15 +375,15 @@
             color: #666;
             cursor: default !important;
         }
-        .sandwitch-section-header:hover {
+        .sandwich-section-header:hover {
             background: #f5f5f5 !important;
         }
-        .sandwitch-table .function-name {
+        .sandwich-table .function-name {
             font-family: 'Courier New', monospace;
             color: #0066cc;
             word-break: break-all;
         }
-        .sandwitch-table .metric {
+        .sandwich-table .metric {
             text-align: right;
             white-space: nowrap;
         }
@@ -423,7 +423,7 @@
                     <label for="view-select">View:</label>
                     <select id="view-select">
                         <option value="flamegraph">Flame Graph</option>
-                        <option value="sandwitch">Sandwitch</option>
+                        <option value="sandwich">Sandwich</option>
                         <option value="heatmap">Flamescope</option>
                     </select>
                 </div>
@@ -573,7 +573,7 @@
             viewMode = selectedMode;
             const filterContainer = document.getElementById('filter-container');
             const sortFilter = document.getElementById('sort-mode-filter');
-            if (viewMode === 'heatmap' || viewMode === 'sandwitch') {
+            if (viewMode === 'heatmap' || viewMode === 'sandwich') {
                 if (isPaused) filterContainer.classList.remove('visible');
                 sortFilter.style.display = 'none';
             } else {
@@ -726,8 +726,8 @@ function applyFrameFilter() {
 
             if (viewMode === 'heatmap') {
                 fetchAndRenderHeatMap(query);
-            } else if (viewMode === 'sandwitch') {
-                fetchAndRenderSandwitch(query);
+            } else if (viewMode === 'sandwich') {
+                fetchAndRenderSandwich(query);
             } else {
                 fetchAndRenderFlamegraph(query);
             }
@@ -1067,22 +1067,22 @@ function applyFrameFilter() {
                 .attr('font-size', '10px').attr('fill', '#555').text(d.maxValue);
         }
 
-        let sandwitchData = null;
-        let sandwitchSortColumn = 'total';
-        let sandwitchSortAsc = false;
+        let sandwichData = null;
+        let sandwichSortColumn = 'total';
+        let sandwichSortAsc = false;
         let selectedFunctionName = null;
-        let sandwitchGraphMode = 'callers';
+        let sandwichGraphMode = 'callers';
 
-        function fetchAndRenderSandwitch(query) {
-            fetch(window.__BASE_PATH__ + '/api/sandwitch' + query)
+        function fetchAndRenderSandwich(query) {
+            fetch(window.__BASE_PATH__ + '/api/sandwich' + query)
                 .then(r => r.json())
-                .then(sandwitches => {
-                    currentGraphs = sandwitches;
+                .then(sandwiches => {
+                    currentGraphs = sandwiches;
                     const strip  = document.getElementById('tab-strip');
                     const charts = document.getElementById('charts');
 
-                    const noData = !sandwitches || sandwitches.length === 0 ||
-                                   sandwitches.every(s => !s.data || !s.data.functions || s.data.functions.length === 0);
+                    const noData = !sandwiches || sandwiches.length === 0 ||
+                                   sandwiches.every(s => !s.data || !s.data.functions || s.data.functions.length === 0);
 
                     if (noData) {
                         strip.style.display  = 'none';
@@ -1090,13 +1090,13 @@ function applyFrameFilter() {
                         return;
                     }
 
-                    if (activeTab === null || !sandwitches.find(s => s.type === activeTab)) {
-                        activeTab = sandwitches[0].type;
+                    if (activeTab === null || !sandwiches.find(s => s.type === activeTab)) {
+                        activeTab = sandwiches[0].type;
                     }
 
                     strip.style.display = 'flex';
                     strip.innerHTML = '';
-                    sandwitches.forEach(s => {
+                    sandwiches.forEach(s => {
                         const btn   = document.createElement('button');
                         btn.className  = 'tab-btn' + (s.type === activeTab ? ' active' : '');
                         btn.textContent = s.type;
@@ -1117,15 +1117,15 @@ function applyFrameFilter() {
                     // Graph mode controls removed - using single DAG view instead
 
                     charts.innerHTML = '';
-                    sandwitches.forEach(s => {
+                    sandwiches.forEach(s => {
                         const panel = document.createElement('div');
                         const panelId = 'panel-' + sanitizeId(s.type);
-                        panel.className = 'tab-panel sandwitch-container' + (s.type === activeTab ? ' active' : '');
+                        panel.className = 'tab-panel sandwich-container' + (s.type === activeTab ? ' active' : '');
                         panel.id = panelId;
                         charts.appendChild(panel);
 
                         if (s.data && s.data.functions && s.data.functions.length > 0) {
-                            setTimeout(() => renderSandwitchView(panelId, s.data), 0);
+                            setTimeout(() => renderSandwichView(panelId, s.data), 0);
                         } else {
                             panel.innerHTML = '<div class="waiting">No data for ' + s.type + '</div>';
                         }
@@ -1140,7 +1140,7 @@ function applyFrameFilter() {
                 });
         }
 
-        function renderSandwitchView(containerId, data) {
+        function renderSandwichView(containerId, data) {
             selectedFunctionName = null;
             const container = document.getElementById(containerId);
             if (!container) return;
@@ -1148,42 +1148,42 @@ function applyFrameFilter() {
             container.innerHTML = '';
 
             const leftPanel = document.createElement('div');
-            leftPanel.className = 'sandwitch-left';
-            leftPanel.id = 'sandwitch-left-' + containerId;
+            leftPanel.className = 'sandwich-left';
+            leftPanel.id = 'sandwich-left-' + containerId;
 
             const divider = document.createElement('div');
-            divider.className = 'sandwitch-divider';
-            divider.id = 'sandwitch-divider-' + containerId;
+            divider.className = 'sandwich-divider';
+            divider.id = 'sandwich-divider-' + containerId;
 
             const rightPanel = document.createElement('div');
-            rightPanel.className = 'sandwitch-right';
-            rightPanel.id = 'sandwitch-right-' + containerId;
+            rightPanel.className = 'sandwich-right';
+            rightPanel.id = 'sandwich-right-' + containerId;
 
             container.appendChild(leftPanel);
             container.appendChild(divider);
             container.appendChild(rightPanel);
 
-            renderSandwitchTable(leftPanel, data);
-            renderSandwitchGraphPlaceholder(rightPanel);
+            renderSandwichTable(leftPanel, data);
+            renderSandwichGraphPlaceholder(rightPanel);
 
-            setupSandwitchDivider(divider, leftPanel);
+            setupSandwichDivider(divider, leftPanel);
         }
 
-        function renderSandwitchGraphPlaceholder(container) {
+        function renderSandwichGraphPlaceholder(container) {
             container.innerHTML = '<div class="waiting">Please select a function.</div>';
         }
 
-        function fetchSandwitchDetail(functionName, sampleType, resourceType, rightPanel) {
+        function fetchSandwichDetail(functionName, sampleType, resourceType, rightPanel) {
             let query = '?functionName=' + encodeURIComponent(functionName) + '&sampleType=' + encodeURIComponent(sampleType);
             if (resourceType) {
                 query += '&resourceType=' + encodeURIComponent(resourceType);
             }
 
-            fetch(window.__BASE_PATH__ + '/api/sandwitch-detail' + query)
+            fetch(window.__BASE_PATH__ + '/api/sandwich-detail' + query)
                 .then(r => r.json())
                 .then(data => {
                     if (data && data[sampleType] && data[sampleType].callers && data[sampleType].callees) {
-                        renderSandwitchGraphs(rightPanel, data[sampleType]);
+                        renderSandwichGraphs(rightPanel, data[sampleType]);
                     } else {
                         rightPanel.innerHTML = '<div class="waiting">No data for this function.</div>';
                     }
@@ -1193,13 +1193,13 @@ function applyFrameFilter() {
                 });
         }
 
-        function renderSandwitchGraphs(container, sandwitchData) {
+        function renderSandwichGraphs(container, sandwichData) {
             container.innerHTML = '';
-            window.currentSandwitchData = sandwitchData;
+            window.currentSandwichData = sandwichData;
 
             // Create DAG section (only one now, replacing separate callers/callees)
             const dagSection = document.createElement('div');
-            dagSection.className = 'sandwitch-graph';
+            dagSection.className = 'sandwich-graph';
             const dagContainer = document.createElement('div');
             dagContainer.id = 'dag-graph';
             dagContainer.style.height = '100%';
@@ -1208,20 +1208,20 @@ function applyFrameFilter() {
             container.appendChild(dagSection);
 
             // Render DAG (shown by default)
-            renderDAGGraph(dagContainer, sandwitchData);
+            renderDAGGraph(dagContainer, sandwichData);
         }
 
-        function renderSandwitchTable(container, data) {
+        function renderSandwichTable(container, data) {
             if (!data || !data.functions) return;
 
             // Clear container first to ensure only one table is rendered
             container.innerHTML = '';
 
             const functions = [...data.functions];
-            sortSandwitchFunctions(functions);
+            sortSandwichFunctions(functions);
 
             const table = document.createElement('table');
-            table.className = 'sandwitch-table';
+            table.className = 'sandwich-table';
 
             const thead = document.createElement('thead');
             const headerRow = document.createElement('tr');
@@ -1230,17 +1230,17 @@ function applyFrameFilter() {
                 const th = document.createElement('th');
                 th.className = 'sortable';
                 th.textContent = text;
-                if (sortKey === sandwitchSortColumn) {
-                    th.classList.add(sandwitchSortAsc ? 'sorted-asc' : 'sorted-desc');
+                if (sortKey === sandwichSortColumn) {
+                    th.classList.add(sandwichSortAsc ? 'sorted-asc' : 'sorted-desc');
                 }
                 th.addEventListener('click', () => {
-                    if (sandwitchSortColumn === sortKey) {
-                        sandwitchSortAsc = !sandwitchSortAsc;
+                    if (sandwichSortColumn === sortKey) {
+                        sandwichSortAsc = !sandwichSortAsc;
                     } else {
-                        sandwitchSortColumn = sortKey;
-                        sandwitchSortAsc = false;
+                        sandwichSortColumn = sortKey;
+                        sandwichSortAsc = false;
                     }
-                    renderSandwitchTable(container, data);
+                    renderSandwichTable(container, data);
                 });
                 return th;
             };
@@ -1257,10 +1257,10 @@ function applyFrameFilter() {
                 row.classList.toggle('selected', fn.name === selectedFunctionName);
                 row.addEventListener('click', () => {
                     selectedFunctionName = fn.name;
-                    renderSandwitchTable(container, data);
+                    renderSandwichTable(container, data);
 
-                    const rightPanel = document.getElementById('sandwitch-right-' + container.parentElement.id);
-                    fetchSandwitchDetail(fn.name, activeTab, selectedResourceType, rightPanel);
+                    const rightPanel = document.getElementById('sandwich-right-' + container.parentElement.id);
+                    fetchSandwichDetail(fn.name, activeTab, selectedResourceType, rightPanel);
                 });
 
                 const nameCell = document.createElement('td');
@@ -1289,8 +1289,8 @@ function applyFrameFilter() {
             return Math.round(value).toString();
         }
 
-        function renderDAGGraph(container, sandwitchData) {
-            if (!sandwitchData || !container) return;
+        function renderDAGGraph(container, sandwichData) {
+            if (!sandwichData || !container) return;
             container.innerHTML = '';
 
             const width = container.clientWidth;
@@ -1301,13 +1301,13 @@ function applyFrameFilter() {
             let callersRoot = null;
             let calleesRoot = null;
 
-            if (sandwitchData.callers) {
-                selectedName = sandwitchData.callers.name;
-                callersRoot = sandwitchData.callers;
+            if (sandwichData.callers) {
+                selectedName = sandwichData.callers.name;
+                callersRoot = sandwichData.callers;
             }
-            if (sandwitchData.callees) {
-                if (!selectedName) selectedName = sandwitchData.callees.name;
-                calleesRoot = sandwitchData.callees;
+            if (sandwichData.callees) {
+                if (!selectedName) selectedName = sandwichData.callees.name;
+                calleesRoot = sandwichData.callees;
             }
 
             if (!selectedName) return;
@@ -1635,24 +1635,24 @@ function applyFrameFilter() {
             });
         }
 
-        function sortSandwitchFunctions(functions) {
+        function sortSandwichFunctions(functions) {
             functions.sort((a, b) => {
                 let aVal, bVal;
-                if (sandwitchSortColumn === 'name') {
+                if (sandwichSortColumn === 'name') {
                     aVal = a.name;
                     bVal = b.name;
                     const cmp = aVal.localeCompare(bVal);
-                    return sandwitchSortAsc ? cmp : -cmp;
+                    return sandwichSortAsc ? cmp : -cmp;
                 } else {
-                    aVal = sandwitchSortColumn === 'self' ? a.self : a.total;
-                    bVal = sandwitchSortColumn === 'self' ? b.self : b.total;
+                    aVal = sandwichSortColumn === 'self' ? a.self : a.total;
+                    bVal = sandwichSortColumn === 'self' ? b.self : b.total;
                     const diff = aVal - bVal;
-                    return sandwitchSortAsc ? diff : -diff;
+                    return sandwichSortAsc ? diff : -diff;
                 }
             });
         }
 
-        function filterSandwitchForFunction(root, functionName) {
+        function filterSandwichForFunction(root, functionName) {
             if (!root) return root;
             return filterFlameNode(root, functionName);
         }
@@ -1684,7 +1684,7 @@ function applyFrameFilter() {
             return newNode.children.length > 0 ? newNode : null;
         }
 
-        function renderSandwitchGraph(container, root) {
+        function renderSandwichGraph(container, root) {
             if (!root || !container) return;
             container.innerHTML = '';
 
@@ -1724,7 +1724,7 @@ function applyFrameFilter() {
             selection.datum(root).call(fg);
         }
 
-        function setupSandwitchDivider(divider, leftPanel) {
+        function setupSandwichDivider(divider, leftPanel) {
             let isResizing = false;
             let startX = 0;
             let startWidth = 0;

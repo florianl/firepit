@@ -275,8 +275,8 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 
 	mux.HandleFunc(base+"/api/flamegraph", handleFlamegraph(st))
 	mux.HandleFunc(base+"/api/flamescope", handleFlamescope(st))
-	mux.HandleFunc(base+"/api/sandwitch", handleSandwitch(st))
-	mux.HandleFunc(base+"/api/sandwitch-detail", handleSandwitchDetail(st))
+	mux.HandleFunc(base+"/api/sandwich", handleSandwich(st))
+	mux.HandleFunc(base+"/api/sandwich-detail", handleSandwichDetail(st))
 	mux.HandleFunc(base+"/api/profiles", handleProfiles(st))
 	mux.HandleFunc(base+"/api/resource-types", handleResourceTypes(st))
 
@@ -426,7 +426,7 @@ func handleResourceTypes(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleSandwitch(st *store.Store) http.HandlerFunc {
+func handleSandwich(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -439,16 +439,16 @@ func handleSandwitch(st *store.Store) http.HandlerFunc {
 		resourceType := r.URL.Query().Get("resourceType")
 
 		types := st.SampleTypes()
-		sandwitches := make([]profiler.NamedSandwitch, 0, len(types))
+		sandwiches := make([]profiler.NamedSandwich, 0, len(types))
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
 			entries = profiler.FilterByResourceType(entries, resourceType)
 			root := profiler.ToFlamegraph(entries)
-			data := profiler.ToSandwitch(root)
-			sandwitches = append(sandwitches, profiler.NamedSandwitch{Type: t, Data: data})
+			data := profiler.ToSandwich(root)
+			sandwiches = append(sandwiches, profiler.NamedSandwich{Type: t, Data: data})
 		}
 
-		if err := json.NewEncoder(w).Encode(sandwitches); err != nil {
+		if err := json.NewEncoder(w).Encode(sandwiches); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
 			return
@@ -456,7 +456,7 @@ func handleSandwitch(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleSandwitchDetail(st *store.Store) http.HandlerFunc {
+func handleSandwichDetail(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -487,9 +487,9 @@ func handleSandwitchDetail(st *store.Store) http.HandlerFunc {
 			entries := st.ProfileEntries(t)
 			entries = profiler.FilterByResourceType(entries, resourceType)
 			root := profiler.ToFlamegraph(entries)
-			sandwitch := profiler.ExtractSandwitchGraphs(root, functionName)
-			result[t] = sandwitch
-			if sandwitch.Callers != nil || sandwitch.Callees != nil {
+			sandwich := profiler.ExtractSandwichGraphs(root, functionName)
+			result[t] = sandwich
+			if sandwich.Callers != nil || sandwich.Callees != nil {
 				foundInAnyType = true
 			}
 		}
