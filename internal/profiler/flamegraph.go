@@ -45,14 +45,14 @@ type FunctionStats struct {
 	Total int64  `json:"total"`
 }
 
-type SandwitchData struct {
+type SandwichData struct {
 	Functions []*FunctionStats `json:"functions"`
 	Root      *FlameNode       `json:"root"`
 }
 
-type NamedSandwitch struct {
-	Type string         `json:"type"`
-	Data *SandwitchData `json:"data"`
+type NamedSandwich struct {
+	Type string        `json:"type"`
+	Data *SandwichData `json:"data"`
 }
 
 // stackTableLookup safely looks up a stack entry by index.
@@ -295,7 +295,7 @@ func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
 	}
 }
 
-func ToSandwitch(root *FlameNode) *SandwitchData {
+func ToSandwich(root *FlameNode) *SandwichData {
 	stats := make(map[string]*FunctionStats)
 	collectFunctionStats(root, stats)
 
@@ -311,22 +311,22 @@ func ToSandwitch(root *FlameNode) *SandwitchData {
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	return &SandwitchData{
+	return &SandwichData{
 		Functions: functions,
 		Root:      root,
 	}
 }
 
-// SandwitchGraphs holds caller and callee flamegraphs for a target function
-type SandwitchGraphs struct {
+// SandwichGraphs holds caller and callee flamegraphs for a target function
+type SandwichGraphs struct {
 	Callers *FlameNode `json:"callers"`
 	Callees *FlameNode `json:"callees"`
 }
 
-// ExtractSandwitchGraphs builds separate caller and callee flamegraphs for a target function
-func ExtractSandwitchGraphs(root *FlameNode, targetName string) *SandwitchGraphs {
+// ExtractSandwichGraphs builds separate caller and callee flamegraphs for a target function
+func ExtractSandwichGraphs(root *FlameNode, targetName string) *SandwichGraphs {
 	if root == nil || targetName == "" {
-		return &SandwitchGraphs{}
+		return &SandwichGraphs{}
 	}
 
 	// Find all paths through the target function and build both caller and callee maps
@@ -334,10 +334,10 @@ func ExtractSandwitchGraphs(root *FlameNode, targetName string) *SandwitchGraphs
 	var targetValue int64
 	calleesMap := make(map[string]int64)
 
-	extractSandwitchPaths(root, targetName, []string{}, &callersMap, &targetValue, &calleesMap)
+	extractSandwichPaths(root, targetName, []string{}, &callersMap, &targetValue, &calleesMap)
 
 	if targetValue == 0 {
-		return &SandwitchGraphs{}
+		return &SandwichGraphs{}
 	}
 
 	// Build caller flamegraph with target as root, showing who calls it
@@ -346,7 +346,7 @@ func ExtractSandwitchGraphs(root *FlameNode, targetName string) *SandwitchGraphs
 	// Build callee flamegraph with target as root, showing what it calls
 	calleeGraph := buildCalleeGraph(root, targetName, targetValue)
 
-	return &SandwitchGraphs{
+	return &SandwichGraphs{
 		Callers: callersGraph,
 		Callees: calleeGraph,
 	}
@@ -479,7 +479,7 @@ func mergeFlameNodes(dst, src *FlameNode) {
 	}
 }
 
-func extractSandwitchPaths(node *FlameNode, targetName string, ancestors []string, callers *map[string]int64, targetValue *int64, callees *map[string]int64) {
+func extractSandwichPaths(node *FlameNode, targetName string, ancestors []string, callers *map[string]int64, targetValue *int64, callees *map[string]int64) {
 	if node.Name == targetName {
 		// Found target - record ancestors as callers and self value
 		*targetValue += node.Value
@@ -500,7 +500,7 @@ func extractSandwitchPaths(node *FlameNode, targetName string, ancestors []strin
 	// Continue searching in children
 	newAncestors := append(ancestors, node.Name)
 	for _, child := range node.Children {
-		extractSandwitchPaths(child, targetName, newAncestors, callers, targetValue, callees)
+		extractSandwichPaths(child, targetName, newAncestors, callers, targetValue, callees)
 	}
 }
 
