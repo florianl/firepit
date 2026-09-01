@@ -194,20 +194,22 @@ func (s *Store) cleanupLoop() {
 func (s *Store) cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
-	for typeStr, entries := range s.entries {
-		var kept []ProfileEntry
-		for _, entry := range entries {
-			if now.Sub(entry.CreatedAt) < s.maxAge {
-				kept = append(kept, entry)
-			} else {
-				s.totalBytes -= entry.Size
+	if s.maxAge > 0 {
+		now := time.Now()
+		for typeStr, entries := range s.entries {
+			var kept []ProfileEntry
+			for _, entry := range entries {
+				if now.Sub(entry.CreatedAt) < s.maxAge {
+					kept = append(kept, entry)
+				} else {
+					s.totalBytes -= entry.Size
+				}
 			}
-		}
-		if len(kept) > 0 {
-			s.entries[typeStr] = kept
-		} else {
-			delete(s.entries, typeStr)
+			if len(kept) > 0 {
+				s.entries[typeStr] = kept
+			} else {
+				delete(s.entries, typeStr)
+			}
 		}
 	}
 
