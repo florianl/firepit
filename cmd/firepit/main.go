@@ -187,6 +187,7 @@ func main() {
 		"max_storage_bytes", cfg.MaxStorageBytes, "from_file", cfg.FromFile)
 
 	var wg sync.WaitGroup
+	var initGroup sync.WaitGroup
 	var grpcServer *grpc.Server
 	var webServer *http.Server
 	var otlpServer *http.Server
@@ -199,20 +200,29 @@ func main() {
 		}
 	} else {
 		// ingest - grpc
+		initGroup.Add(1)
 		wg.Go(func() {
-			grpcServer = startGRPCServer(st, cfg.GRPCAddr)
+			defer initGroup.Done()
+			grpcServer = startGRPCServer(st, cfg.GRPCAddr, &wg)
 		})
 
 		// ingest - http
+		initGroup.Add(1)
 		wg.Go(func() {
-			otlpServer = startOTLPHTTPServer(st, cfg)
+			defer initGroup.Done()
+			otlpServer = startOTLPHTTPServer(st, cfg, &wg)
 		})
 	}
 
 	// UI
+	initGroup.Add(1)
 	wg.Go(func() {
-		webServer = startWebUIServer(st, cfg)
+		defer initGroup.Done()
+		webServer = startWebUIServer(st, cfg, &wg)
 	})
+
+	// Avoid race condition by waiting for servers to start
+	initGroup.Wait()
 
 	<-ctx.Done()
 	slog.Info("Shutting down")
@@ -277,7 +287,7 @@ func loadFromFile(st *store.Store, path string) error {
 	return nil
 }
 
-func startGRPCServer(st *store.Store, grpcAddr string) *grpc.Server {
+func startGRPCServer(st *store.Store, grpcAddr string, wg *sync.WaitGroup) *grpc.Server {
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		slog.Error("Failed to listen on gRPC address", "addr", grpcAddr, "error", err)
@@ -288,11 +298,11 @@ func startGRPCServer(st *store.Store, grpcAddr string) *grpc.Server {
 	collectorprofiles.RegisterProfilesServiceServer(grpcServer, receiver.New(st))
 
 	slog.Info("gRPC server listening", "addr", grpcAddr)
-	go func() {
+	wg.Go(func() {
 		if err := grpcServer.Serve(lis); err != nil {
 			slog.Error("gRPC server error", "error", err)
 		}
-	}()
+	})
 
 	return grpcServer
 }
@@ -348,7 +358,7 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 	return mux
 }
 
-func startWebUIServer(st *store.Store, cfg Config) *http.Server {
+func startWebUIServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.Server {
 	mux := buildWebUIMux(st, cfg)
 
 	server := &http.Server{
@@ -359,16 +369,16 @@ func startWebUIServer(st *store.Store, cfg Config) *http.Server {
 	slog.Info("Web UI listening", "addr", cfg.WebAddr)
 	slog.Info("Open browser to", "url", "http://localhost"+cfg.WebAddr+cfg.BasePath)
 
-	go func() {
+	wg.Go(func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Web UI server error", "error", err)
 		}
-	}()
+	})
 
 	return server
 }
 
-func startOTLPHTTPServer(st *store.Store, cfg Config) *http.Server {
+func startOTLPHTTPServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/profiles", receiver.NewHTTPHandler(st, cfg.MaxBodySize))
 
@@ -379,11 +389,11 @@ func startOTLPHTTPServer(st *store.Store, cfg Config) *http.Server {
 
 	slog.Info("OTLP HTTP server listening", "addr", cfg.HTTPAddr)
 
-	go func() {
+	wg.Go(func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("OTLP HTTP server error", "error", err)
 		}
-	}()
+	})
 
 	return server
 }
