@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -22,6 +24,7 @@ import (
 
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/florianl/firepit/internal/profiler"
 	"github.com/florianl/firepit/internal/receiver"
@@ -44,6 +47,7 @@ type Config struct {
 	GRPCAddr         string
 	HTTPAddr         string
 	WebAddr          string
+	FromFile         string
 	BasePath         string
 	ProfileTTL       time.Duration
 	CleanupInterval  time.Duration
@@ -66,6 +70,7 @@ func loadConfig() Config {
 	flag.Int64Var(&cfg.MaxBodySize, "max-body-size", cfg.MaxBodySize, "Maximum request body size in bytes")
 	flag.Int64Var(&cfg.MaxStorageBytes, "max-storage-bytes", cfg.MaxStorageBytes, "Maximum total profile storage in bytes (0 = unlimited)")
 	flag.BoolVar(&cfg.RuntimeProfiling, "pprof", false, "Serve runtime profiling data via http")
+	flag.StringVar(&cfg.FromFile, "from-file", cfg.FromFile, "Path to a JSONL file of proto-JSON encoded profiles to load at startup")
 	flag.Parse()
 
 	bp, err := normalizeBasePath(cfg.BasePath)
@@ -156,13 +161,21 @@ func loadConfigFromEnv(getenv func(string) string) Config {
 		}
 	}
 
+	if ff := getenv("FROM_FILE"); ff != "" {
+		cfg.FromFile = ff
+	}
+
 	return cfg
 }
 
 func main() {
 	cfg := loadConfig()
 
-	st := store.New(cfg.ProfileTTL, cfg.CleanupInterval, cfg.MaxStorageBytes)
+	ttl := cfg.ProfileTTL
+	if cfg.FromFile != "" {
+		ttl = 0 // disable TTL eviction when data comes from a file
+	}
+	st := store.New(ttl, cfg.CleanupInterval, cfg.MaxStorageBytes)
 	defer st.Close()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -171,22 +184,30 @@ func main() {
 	slog.Info("Configuration loaded", "grpc_addr", cfg.GRPCAddr, "http_addr", cfg.HTTPAddr,
 		"web_addr", cfg.WebAddr, "base_path", cfg.BasePath, "profile_ttl", cfg.ProfileTTL,
 		"cleanup_interval", cfg.CleanupInterval, "max_body_size", cfg.MaxBodySize,
-		"max_storage_bytes", cfg.MaxStorageBytes)
+		"max_storage_bytes", cfg.MaxStorageBytes, "from_file", cfg.FromFile)
 
 	var wg sync.WaitGroup
 	var grpcServer *grpc.Server
 	var webServer *http.Server
 	var otlpServer *http.Server
 
-	// ingest - grpc
-	wg.Go(func() {
-		grpcServer = startGRPCServer(st, cfg.GRPCAddr)
-	})
+	if cfg.FromFile != "" {
+		if err := loadFromFile(st, cfg.FromFile); err != nil {
+			slog.Error("Failed to load profiles from file", "file", cfg.FromFile,
+				"error", err)
+			os.Exit(1)
+		}
+	} else {
+		// ingest - grpc
+		wg.Go(func() {
+			grpcServer = startGRPCServer(st, cfg.GRPCAddr)
+		})
 
-	// ingest - http
-	wg.Go(func() {
-		otlpServer = startOTLPHTTPServer(st, cfg)
-	})
+		// ingest - http
+		wg.Go(func() {
+			otlpServer = startOTLPHTTPServer(st, cfg)
+		})
+	}
 
 	// UI
 	wg.Go(func() {
@@ -222,6 +243,38 @@ func main() {
 	wg.Wait()
 
 	slog.Info("Shutdown complete")
+}
+
+// loadFromFile reads a JSON encoded file and tries to interpret it as ExportProfilesServiceRequest.
+func loadFromFile(st *store.Store, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed opening %s: %v", path, err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 64*1024*1024)
+
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		req := &collectorprofiles.ExportProfilesServiceRequest{}
+		if err := protojson.Unmarshal(line, req); err != nil {
+			slog.Warn("Skipping unparseable line", "file", path, "line", line, "error", err)
+			continue
+		}
+		st.Add(req.ResourceProfiles, req.Dictionary)
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed reading %s: %v", path, err)
+	}
+
+	slog.Info("Loaded profiles from file", "file", path)
+
+	return nil
 }
 
 func startGRPCServer(st *store.Store, grpcAddr string) *grpc.Server {
