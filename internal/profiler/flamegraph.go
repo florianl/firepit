@@ -22,7 +22,7 @@ var stackCachePool = sync.Pool{
 type FlameNode struct {
 	Name        string                `json:"name"`
 	Filename    string                `json:"filename,omitempty"`
-	FrameType   string                `json:"l,omitempty"`
+	FrameType   string                `json:"frametype,omitempty"`
 	Value       int64                 `json:"value"`
 	Children    []*FlameNode          `json:"children,omitempty"`
 	childrenMap map[string]*FlameNode `json:"-"`
