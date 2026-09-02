@@ -293,7 +293,7 @@ func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
 }
 
 func ToSandwich(root *FlameNode) *SandwichData {
-	stats := make(map[string]*FunctionStats)
+	stats := make(map[string]*FunctionStats, len(root.Children))
 	collectFunctionStats(root, stats)
 
 	functions := make([]*FunctionStats, 0, len(stats))
@@ -489,7 +489,7 @@ func extractSandwichPaths(node *FlameNode, targetName string, ancestors []string
 
 		// Process children as callees
 		for _, child := range node.Children {
-			aggregateCallees(child, callees, node.Value)
+			aggregateCallees(child, callees)
 		}
 		return
 	}
@@ -501,13 +501,13 @@ func extractSandwichPaths(node *FlameNode, targetName string, ancestors []string
 	}
 }
 
-func aggregateCallees(node *FlameNode, callees *map[string]int64, parentValue int64) {
+func aggregateCallees(node *FlameNode, callees *map[string]int64) {
 	if node.Name != "root" {
 		(*callees)[node.Name] += node.Value
 	}
 
 	for _, child := range node.Children {
-		aggregateCallees(child, callees, node.Value)
+		aggregateCallees(child, callees)
 	}
 }
 
