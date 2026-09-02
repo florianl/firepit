@@ -539,7 +539,7 @@ func handleSandwichDetail(st *store.Store) http.HandlerFunc {
 			types = []string{sampleType}
 		}
 
-		result := make(map[string]interface{})
+		result := make(map[string]any)
 		foundInAnyType := false
 		for _, t := range types {
 			entries := st.ProfileEntries(t)

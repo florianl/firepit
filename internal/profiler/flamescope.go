@@ -1,6 +1,8 @@
 package profiler
 
 import (
+	"slices"
+
 	"github.com/florianl/firepit/internal/store"
 )
 
@@ -38,19 +40,16 @@ func ToHeatMap(entries []store.ProfileEntry) HeatMapData {
 		}
 
 		// Check Profile.TimeUnixNano
-		if entry.Profile.TimeUnixNano > 0 {
-			if !hasValidTime {
-				minT = entry.Profile.TimeUnixNano
-				maxT = entry.Profile.TimeUnixNano
-				hasValidTime = true
-			} else {
-				if entry.Profile.TimeUnixNano < minT {
-					minT = entry.Profile.TimeUnixNano
-				}
-				if entry.Profile.TimeUnixNano > maxT {
-					maxT = entry.Profile.TimeUnixNano
-				}
-			}
+		if entry.Profile.TimeUnixNano == 0 {
+			continue
+		}
+		if !hasValidTime {
+			minT = entry.Profile.TimeUnixNano
+			maxT = entry.Profile.TimeUnixNano
+			hasValidTime = true
+		} else {
+			minT = min(entry.Profile.TimeUnixNano, minT)
+			maxT = max(entry.Profile.TimeUnixNano, maxT)
 		}
 
 		// Check Sample.TimestampsUnixNano
@@ -145,20 +144,12 @@ func ToHeatMap(entries []store.ProfileEntry) HeatMapData {
 		}
 	}
 
-	// Find max value
-	var maxValue int64
-	for _, v := range cells {
-		if v > maxValue {
-			maxValue = v
-		}
-	}
-
 	return HeatMapData{
 		MinTimeSec:    int64(minT / 1_000_000_000),
 		NumSeconds:    numSeconds,
 		NumSubBuckets: numSubBuckets,
 		SubBucketMs:   10,
 		Cells:         cells,
-		MaxValue:      maxValue,
+		MaxValue:      slices.Max(cells),
 	}
 }
