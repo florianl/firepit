@@ -150,17 +150,14 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 		childrenMap: make(map[string]*FlameNode),
 	}
 
-	stackCache := stackCachePool.Get().(map[int32][]FrameInfo)
-	defer func() {
-		clear(stackCache)
-		stackCachePool.Put(stackCache)
-	}()
-
 	profileCount := 0
 	for _, entry := range entries {
 		if entry.Profile != nil && entry.Dictionary != nil {
 			profileCount++
+			stackCache := stackCachePool.Get().(map[int32][]FrameInfo)
 			processProfile(root, entry.Profile, entry.Dictionary, stackCache)
+			clear(stackCache)
+			stackCachePool.Put(stackCache)
 		}
 	}
 
