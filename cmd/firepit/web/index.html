@@ -654,7 +654,7 @@ function applyFrameFilter() {
                 })
                 .setColorMapper(function(d, originalColor) {
                     if (originalColor === '#E600E6') return originalColor;
-                    const frameType = d.data.l || d.data.libtype || '';
+                    const frameType = d.data.frametype || '';
                     if (!frameType) return originalColor;
                     // Reproduce the library's name-hash saturation for subtle per-frame variation
                     const name = d.data.name || '';
@@ -1340,7 +1340,7 @@ function applyFrameFilter() {
                             type: isCallers ? 'caller' : 'callee',
                             value: node.value,
                             depth: depth,
-                            frameType: node.l || node.libtype || node.FrameType || '',
+                            frametype: node.frametype || '',
                             l: node.l,
                             libtype: node.libtype
                         };
@@ -1551,7 +1551,7 @@ function applyFrameFilter() {
             const colorMapper = function(d) {
                 if (d.type === 'center') return '#2c3e50';
 
-                const frameType = d.frameType || d.l || d.libtype || '';
+                const frameType = d.frametype || '';
                 if (!frameType) {
                     return '#cccccc';
                 }
@@ -1702,7 +1702,7 @@ function applyFrameFilter() {
                 })
                 .setColorMapper(function(d, originalColor) {
                     if (originalColor === '#E600E6') return originalColor;
-                    const frameType = d.data.l || d.data.libtype || '';
+                    const frameType = d.data.frametype || '';
                     if (!frameType) return originalColor;
                     const name = d.data.name || '';
                     let s = 0;
