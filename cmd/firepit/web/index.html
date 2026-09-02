@@ -1321,8 +1321,8 @@ function applyFrameFilter() {
             nodes.push(centerNode);
             nodeMap.set('center', centerNode);
 
-            // Helper to flatten tree and limit depth to 5
-            function addNodesFromTree(root, isCallers, maxDepth = 5) {
+            // Helper to flatten tree and limit depth to 7
+            function addNodesFromTree(root, isCallers, maxDepth = 7) {
                 if (!root || !root.children) return;
 
                 const nodesByDepth = [];
@@ -1363,9 +1363,9 @@ function applyFrameFilter() {
                     }
                 }
 
-                // Start traversal from root's children (limit to 5 immediate callers/callees)
+                // Start traversal from root's children (limit to maxDepth immediate callers/callees)
                 if (root.children) {
-                    root.children.slice(0, 5).forEach(child => {
+                    root.children.slice(0, maxDepth).forEach(child => {
                         traverse(child, 1, 'center');
                     });
                 }
@@ -1373,12 +1373,12 @@ function applyFrameFilter() {
 
             // Add callers (flowing up to the selected frame)
             if (callersRoot) {
-                addNodesFromTree(callersRoot, true, 5);
+                addNodesFromTree(callersRoot, true);
             }
 
             // Add callees (flowing down from the selected frame)
             if (calleesRoot) {
-                addNodesFromTree(calleesRoot, false, 5);
+                addNodesFromTree(calleesRoot, false);
             }
 
             if (nodes.length <= 1) {
