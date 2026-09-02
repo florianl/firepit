@@ -167,9 +167,20 @@ func TestLoadConfigBasePath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// loadConfigFromEnv returns un-normalized paths; normalization happens in loadConfig
 			cfg := loadConfigFromEnv(func(key string) string { return tt.env[key] })
-			if cfg.BasePath != tt.wantPath {
-				t.Errorf("BasePath = %q, want %q", cfg.BasePath, tt.wantPath)
+			// Test that normalizeBasePath produces the expected output
+			normalized, err := normalizeBasePath(cfg.BasePath)
+			if tt.name == "invalid chars fallback to empty" && err == nil {
+				t.Errorf("expected error for invalid chars, got nil")
+				return
+			}
+			if tt.name != "invalid chars fallback to empty" && err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if normalized != tt.wantPath {
+				t.Errorf("normalized BasePath = %q, want %q", normalized, tt.wantPath)
 			}
 		})
 	}

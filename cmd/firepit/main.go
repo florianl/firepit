@@ -153,12 +153,7 @@ func loadConfigFromEnv(getenv func(string) string) Config {
 	}
 
 	if bp := getenv("BASE_PATH"); bp != "" {
-		normalized, err := normalizeBasePath(bp)
-		if err != nil {
-			slog.Warn("Invalid BASE_PATH, using empty base path", "error", err)
-		} else {
-			cfg.BasePath = normalized
-		}
+		cfg.BasePath = bp
 	}
 
 	if ff := getenv("FROM_FILE"); ff != "" {
