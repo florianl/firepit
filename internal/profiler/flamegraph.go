@@ -173,8 +173,6 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 		return
 	}
 
-	processedSamples := 0
-
 	for _, sample := range profile.Samples {
 		var value int64
 
@@ -199,7 +197,6 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 		}
 
 		insertStack(root, stack, value)
-		processedSamples++
 	}
 }
 
@@ -326,22 +323,11 @@ func ExtractSandwichGraphs(root *FlameNode, targetName string) *SandwichGraphs {
 		return &SandwichGraphs{}
 	}
 
-	// Find all paths through the target function and build both caller and callee maps
-	callersMap := make(map[string]int64)
-	var targetValue int64
-	calleesMap := make(map[string]int64)
-
-	extractSandwichPaths(root, targetName, []string{}, &callersMap, &targetValue, &calleesMap)
-
-	if targetValue == 0 {
-		return &SandwichGraphs{}
-	}
-
 	// Build caller flamegraph with target as root, showing who calls it
-	callersGraph := buildCallerGraph(root, targetName, targetValue)
+	callersGraph := buildCallerGraph(root, targetName)
 
 	// Build callee flamegraph with target as root, showing what it calls
-	calleeGraph := buildCalleeGraph(root, targetName, targetValue)
+	calleeGraph := buildCalleeGraph(root, targetName)
 
 	return &SandwichGraphs{
 		Callers: callersGraph,
@@ -349,21 +335,26 @@ func ExtractSandwichGraphs(root *FlameNode, targetName string) *SandwichGraphs {
 	}
 }
 
-func buildCallerGraph(originalRoot *FlameNode, targetName string, targetValue int64) *FlameNode {
+func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 	// Find the path to target and build an inverted tree for icicle visualization
 	var pathToTarget []*FlameNode
 	findPathToTarget(originalRoot, targetName, []*FlameNode{}, &pathToTarget)
 
 	if len(pathToTarget) == 0 {
-		return &FlameNode{Name: targetName, Value: targetValue, Children: []*FlameNode{}, childrenMap: make(map[string]*FlameNode)}
+		return &FlameNode{Name: targetName, Children: []*FlameNode{}, childrenMap: make(map[string]*FlameNode)}
 	}
+
+	// Get target node properties (last in path)
+	targetNode := pathToTarget[len(pathToTarget)-1]
 
 	// Build inverted tree: target at root (top, widest) with callers as descendants
 	// pathToTarget[0] is root (artificial), pathToTarget[len-1] is targetFunc
 	// Result: targetFunc (root) -> funcB -> funcA -> ... (excluding artificial root)
 	newRoot := &FlameNode{
 		Name:        targetName,
-		Value:       targetValue,
+		Value:       targetNode.Value,
+		Filename:    targetNode.Filename,
+		FrameType:   targetNode.FrameType,
 		Children:    []*FlameNode{},
 		childrenMap: make(map[string]*FlameNode),
 	}
@@ -406,19 +397,38 @@ func findPathToTarget(node *FlameNode, targetName string, currentPath []*FlameNo
 	return false
 }
 
-func buildCalleeGraph(originalRoot *FlameNode, targetName string, targetValue int64) *FlameNode {
+func buildCalleeGraph(originalRoot *FlameNode, targetName string) *FlameNode {
+	// Find target node to get its properties
+	targetNode := findTargetNode(originalRoot, targetName)
+
 	// Create root as the target function
 	root := &FlameNode{
 		Name:        targetName,
-		Value:       targetValue,
 		Children:    []*FlameNode{},
 		childrenMap: make(map[string]*FlameNode),
+	}
+	if targetNode != nil {
+		root.Value = targetNode.Value
+		root.Filename = targetNode.Filename
+		root.FrameType = targetNode.FrameType
 	}
 
 	// Find all callees (full subtrees) of the target
 	extractCalleeSubtrees(originalRoot, targetName, root)
 
 	return root
+}
+
+func findTargetNode(node *FlameNode, targetName string) *FlameNode {
+	if node.Name == targetName {
+		return node
+	}
+	for _, child := range node.Children {
+		if result := findTargetNode(child, targetName); result != nil {
+			return result
+		}
+	}
+	return nil
 }
 
 func extractCalleeSubtrees(node *FlameNode, targetName string, targetRoot *FlameNode) {
@@ -473,41 +483,6 @@ func mergeFlameNodes(dst, src *FlameNode) {
 			dst.Children = append(dst.Children, copiedChild)
 			dst.childrenMap[copiedChild.Name] = copiedChild
 		}
-	}
-}
-
-func extractSandwichPaths(node *FlameNode, targetName string, ancestors []string, callers *map[string]int64, targetValue *int64, callees *map[string]int64) {
-	if node.Name == targetName {
-		// Found target - record ancestors as callers and self value
-		*targetValue += node.Value
-
-		for _, ancestor := range ancestors {
-			if ancestor != "root" {
-				(*callers)[ancestor] += node.Value
-			}
-		}
-
-		// Process children as callees
-		for _, child := range node.Children {
-			aggregateCallees(child, callees)
-		}
-		return
-	}
-
-	// Continue searching in children
-	newAncestors := append(ancestors, node.Name)
-	for _, child := range node.Children {
-		extractSandwichPaths(child, targetName, newAncestors, callers, targetValue, callees)
-	}
-}
-
-func aggregateCallees(node *FlameNode, callees *map[string]int64) {
-	if node.Name != "root" {
-		(*callees)[node.Name] += node.Value
-	}
-
-	for _, child := range node.Children {
-		aggregateCallees(child, callees)
 	}
 }
 
