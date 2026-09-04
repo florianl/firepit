@@ -5,11 +5,25 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/florianl/firepit/internal/store"
 	collectorprofiles "go.opentelemetry.io/proto/otlp/collector/profiles/v1development"
+)
+
+var (
+	requestPool = sync.Pool{
+		New: func() any {
+			return &collectorprofiles.ExportProfilesServiceRequest{}
+		},
+	}
+	responsePool = sync.Pool{
+		New: func() any {
+			return &collectorprofiles.ExportProfilesServiceResponse{}
+		},
+	}
 )
 
 func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
@@ -32,7 +46,11 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
 			return
 		}
 
-		req := &collectorprofiles.ExportProfilesServiceRequest{}
+		req := requestPool.Get().(*collectorprofiles.ExportProfilesServiceRequest)
+		defer func() {
+			req.Reset()
+			requestPool.Put(req)
+		}()
 		if err := protojson.Unmarshal(body, req); err != nil {
 			http.Error(w, "Failed to parse request: "+err.Error(), http.StatusBadRequest)
 			return
@@ -40,7 +58,11 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
 
 		s.Add(req.ResourceProfiles, req.Dictionary)
 
-		resp := &collectorprofiles.ExportProfilesServiceResponse{}
+		resp := responsePool.Get().(*collectorprofiles.ExportProfilesServiceResponse)
+		defer func() {
+			resp.Reset()
+			responsePool.Put(resp)
+		}()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(resp)
