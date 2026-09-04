@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
@@ -338,12 +339,18 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 	mux.HandleFunc(base+"/api/profiles", handleProfiles(st))
 	mux.HandleFunc(base+"/api/resource-types", handleResourceTypes(st))
 
+	prefix := base + "/debug/pprof"
 	if cfg.RuntimeProfiling {
-		mux.HandleFunc(base+"/debug/pprof", pprof.Index)
-		mux.HandleFunc(base+"/debug/pprof/cmdline", pprof.Cmdline)
-		mux.HandleFunc(base+"/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc(base+"/debug/pprof/symbol", pprof.Symbol)
-		mux.HandleFunc(base+"/debug/pprof/trace", pprof.Trace)
+		mux.HandleFunc(prefix+"/", pprof.Index)
+		mux.HandleFunc(prefix+"/cmdline", pprof.Cmdline)
+		mux.HandleFunc(prefix+"/profile", pprof.Profile)
+		mux.HandleFunc(prefix+"/symbol", pprof.Symbol)
+		mux.HandleFunc(prefix+"/trace", pprof.Trace)
+		// Register runtime profiles
+		for _, profile := range rpprof.Profiles() {
+			p := profile
+			mux.Handle(prefix+"/"+p.Name(), pprof.Handler(p.Name()))
+		}
 	}
 
 	if base != "" {
