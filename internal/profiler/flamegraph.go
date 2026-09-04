@@ -147,7 +147,7 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 		Name:        "root",
 		Value:       0,
 		Children:    []*FlameNode{},
-		childrenMap: make(map[string]*FlameNode),
+		childrenMap: nil,
 	}
 
 	profileCount := 0
@@ -201,10 +201,8 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 }
 
 func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo) []FrameInfo {
-	var stack []FrameInfo
-
 	if dict == nil {
-		return stack
+		return nil
 	}
 
 	// Check if this stack is already resolved
@@ -215,10 +213,11 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 	// Get the stack from the dictionary using the stack_index
 	stackEntry := stackTableLookup(dict, sample.StackIndex)
 	if stackEntry == nil {
-		stackCache[sample.StackIndex] = stack
-		return stack
+		stackCache[sample.StackIndex] = nil
+		return nil
 	}
 
+	stack := make([]FrameInfo, 0, len(stackEntry.LocationIndices))
 	// Process each location in the stack
 	for _, locIdx := range stackEntry.LocationIndices {
 		loc := locationTableLookup(dict, locIdx)
@@ -270,7 +269,11 @@ func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
 	root.Value += value
 
 	for _, frame := range stack {
-		child, exists := current.childrenMap[frame.Name]
+		var child *FlameNode
+		var exists bool
+		if current.childrenMap != nil {
+			child, exists = current.childrenMap[frame.Name]
+		}
 		if !exists {
 			child = &FlameNode{
 				Name:        frame.Name,
@@ -278,9 +281,13 @@ func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
 				FrameType:   frame.FrameType,
 				Value:       0,
 				Children:    []*FlameNode{},
-				childrenMap: make(map[string]*FlameNode),
+				childrenMap: nil,
 			}
 			current.Children = append(current.Children, child)
+
+			if current.childrenMap == nil {
+				current.childrenMap = make(map[string]*FlameNode)
+			}
 			current.childrenMap[frame.Name] = child
 		}
 
@@ -341,7 +348,7 @@ func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 	findPathToTarget(originalRoot, targetName, []*FlameNode{}, &pathToTarget)
 
 	if len(pathToTarget) == 0 {
-		return &FlameNode{Name: targetName, Children: []*FlameNode{}, childrenMap: make(map[string]*FlameNode)}
+		return &FlameNode{Name: targetName, Children: []*FlameNode{}, childrenMap: nil}
 	}
 
 	// Get target node properties (last in path)
@@ -356,7 +363,7 @@ func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 		Filename:    targetNode.Filename,
 		FrameType:   targetNode.FrameType,
 		Children:    []*FlameNode{},
-		childrenMap: make(map[string]*FlameNode),
+		childrenMap: nil,
 	}
 
 	// Add callers in reverse order (from immediate caller up, but excluding the artificial root node)
@@ -369,9 +376,12 @@ func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 			Filename:    node.Filename,
 			FrameType:   node.FrameType,
 			Children:    []*FlameNode{},
-			childrenMap: make(map[string]*FlameNode),
+			childrenMap: nil,
 		}
 		currentNode.Children = append(currentNode.Children, newNode)
+		if currentNode.childrenMap == nil {
+			currentNode.childrenMap = make(map[string]*FlameNode)
+		}
 		currentNode.childrenMap[newNode.Name] = newNode
 		currentNode = newNode
 	}
@@ -405,7 +415,7 @@ func buildCalleeGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 	root := &FlameNode{
 		Name:        targetName,
 		Children:    []*FlameNode{},
-		childrenMap: make(map[string]*FlameNode),
+		childrenMap: nil,
 	}
 	if targetNode != nil {
 		root.Value = targetNode.Value
@@ -436,11 +446,19 @@ func extractCalleeSubtrees(node *FlameNode, targetName string, targetRoot *Flame
 		// Found target - copy all its children (full subtrees) to targetRoot
 		for _, child := range node.Children {
 			copiedChild := copyFlameNode(child)
-			if existing, exists := targetRoot.childrenMap[copiedChild.Name]; exists {
+			var existing *FlameNode
+			var exists bool
+			if targetRoot.childrenMap != nil {
+				existing, exists = targetRoot.childrenMap[copiedChild.Name]
+			}
+			if exists {
 				// Merge with existing child
 				mergeFlameNodes(existing, copiedChild)
 			} else {
 				targetRoot.Children = append(targetRoot.Children, copiedChild)
+				if targetRoot.childrenMap == nil {
+					targetRoot.childrenMap = make(map[string]*FlameNode)
+				}
 				targetRoot.childrenMap[copiedChild.Name] = copiedChild
 			}
 		}
@@ -463,11 +481,14 @@ func copyFlameNode(node *FlameNode) *FlameNode {
 		Filename:    node.Filename,
 		FrameType:   node.FrameType,
 		Children:    make([]*FlameNode, 0, len(node.Children)),
-		childrenMap: make(map[string]*FlameNode),
+		childrenMap: nil,
 	}
 	for _, child := range node.Children {
 		copiedChild := copyFlameNode(child)
 		newNode.Children = append(newNode.Children, copiedChild)
+		if newNode.childrenMap == nil {
+			newNode.childrenMap = make(map[string]*FlameNode)
+		}
 		newNode.childrenMap[copiedChild.Name] = copiedChild
 	}
 	return newNode
@@ -476,11 +497,19 @@ func copyFlameNode(node *FlameNode) *FlameNode {
 func mergeFlameNodes(dst, src *FlameNode) {
 	dst.Value += src.Value
 	for _, srcChild := range src.Children {
-		if dstChild, exists := dst.childrenMap[srcChild.Name]; exists {
+		var dstChild *FlameNode
+		var exists bool
+		if dst.childrenMap != nil {
+			dstChild, exists = dst.childrenMap[srcChild.Name]
+		}
+		if exists {
 			mergeFlameNodes(dstChild, srcChild)
 		} else {
 			copiedChild := copyFlameNode(srcChild)
 			dst.Children = append(dst.Children, copiedChild)
+			if dst.childrenMap == nil {
+				dst.childrenMap = make(map[string]*FlameNode)
+			}
 			dst.childrenMap[copiedChild.Name] = copiedChild
 		}
 	}
