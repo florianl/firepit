@@ -201,10 +201,8 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 }
 
 func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo) []FrameInfo {
-	var stack []FrameInfo
-
 	if dict == nil {
-		return stack
+		return nil
 	}
 
 	// Check if this stack is already resolved
@@ -215,10 +213,11 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 	// Get the stack from the dictionary using the stack_index
 	stackEntry := stackTableLookup(dict, sample.StackIndex)
 	if stackEntry == nil {
-		stackCache[sample.StackIndex] = stack
-		return stack
+		stackCache[sample.StackIndex] = nil
+		return nil
 	}
 
+	stack := make([]FrameInfo, 0, len(stackEntry.LocationIndices))
 	// Process each location in the stack
 	for _, locIdx := range stackEntry.LocationIndices {
 		loc := locationTableLookup(dict, locIdx)
