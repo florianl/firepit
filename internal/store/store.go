@@ -15,11 +15,11 @@ import (
 )
 
 type ProfileEntry struct {
-	CreatedAt  time.Time
-	Profile    *profilespb.Profile
-	Dictionary *profilespb.ProfilesDictionary
-	Attributes []*commonpb.KeyValue
-	Size       int64
+	CreatedAt          time.Time
+	Profile            *profilespb.Profile
+	Dictionary         *profilespb.ProfilesDictionary
+	ResourceAttributes []*commonpb.KeyValue
+	Size               int64
 }
 
 // stringTableLookup safely looks up a string in the string table by index.
@@ -76,12 +76,12 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 		}
 
 		// Extract resource attributes
-		var attributes []*commonpb.KeyValue
+		var resAttrs []*commonpb.KeyValue
 		if rp.Resource != nil {
-			attributes = rp.Resource.Attributes
+			resAttrs = rp.Resource.Attributes
 
 			// Cache resource attributes for the filtering
-			for _, attr := range attributes {
+			for _, attr := range resAttrs {
 				if attr.Value != nil {
 					if strVal := attr.Value.GetStringValue(); strVal != "" {
 						seenResourceTypes[attr.Key+":"+strVal] = true
@@ -117,10 +117,10 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 				}
 
 				entry := ProfileEntry{
-					CreatedAt:  time.Unix(0, int64(profile.TimeUnixNano)),
-					Profile:    profile,
-					Dictionary: dictionary,
-					Attributes: attributes,
+					CreatedAt:          time.Unix(0, int64(profile.TimeUnixNano)),
+					Profile:            profile,
+					Dictionary:         dictionary,
+					ResourceAttributes: resAttrs,
 					// Include the size of the dictionary proportionally
 					Size: int64(proto.Size(profile) + proto.Size(dictionary)/len(sp.Profiles)),
 				}
@@ -216,6 +216,22 @@ func (s *Store) cleanup() {
 	if s.maxMemory > 0 && s.totalBytes > s.maxMemory {
 		s.evictOldest()
 	}
+
+	// Update ResourceAttributes for filtering
+	seenResourceTypes := make(map[string]bool)
+	for st := range s.entries {
+		for _, entry := range s.entries[st] {
+			for _, attr := range entry.ResourceAttributes {
+				if attr.Value != nil {
+					if strVal := attr.Value.GetStringValue(); strVal != "" {
+						seenResourceTypes[attr.Key+":"+strVal] = true
+					}
+				}
+			}
+		}
+	}
+	s.resourceTypes = slices.Sorted(maps.Keys(seenResourceTypes))
+	s.resourceTypes = slices.Compact(s.resourceTypes)
 }
 
 func (s *Store) evictOldest() {

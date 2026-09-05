@@ -73,11 +73,11 @@ func TestAddAndRetrieve(t *testing.T) {
 		t.Fatal("Retrieved dictionary does not match")
 	}
 
-	if len(entries[0].Attributes) != 1 {
+	if len(entries[0].ResourceAttributes) != 1 {
 		t.Fatal("Expected 1 attribute")
 	}
 
-	if entries[0].Attributes[0].Key != "service.name" {
+	if entries[0].ResourceAttributes[0].Key != "service.name" {
 		t.Fatal("Attribute key mismatch")
 	}
 }
@@ -305,7 +305,7 @@ func TestNilResourceAttributes(t *testing.T) {
 		t.Fatalf("Expected 1 entry, got %d", len(entries))
 	}
 
-	if entries[0].Attributes != nil {
+	if entries[0].ResourceAttributes != nil {
 		t.Fatal("Expected nil attributes")
 	}
 }
