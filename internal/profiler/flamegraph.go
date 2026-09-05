@@ -127,10 +127,10 @@ func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []s
 
 	var filtered []store.ProfileEntry
 	for _, entry := range entries {
-		if entry.Attributes == nil {
+		if entry.ResourceAttributes == nil {
 			continue
 		}
-		for _, attr := range entry.Attributes {
+		for _, attr := range entry.ResourceAttributes {
 			if attr.Key == key && attr.Value != nil {
 				if strVal := attr.Value.GetStringValue(); strVal == value {
 					filtered = append(filtered, entry)

@@ -98,7 +98,7 @@ func TestFilterByResourceTypeEmpty(t *testing.T) {
 
 func TestFilterByResourceTypeNoFilter(t *testing.T) {
 	entry := store.ProfileEntry{
-		Attributes: []*commonpb.KeyValue{
+		ResourceAttributes: []*commonpb.KeyValue{
 			{
 				Key: "service.name",
 				Value: &commonpb.AnyValue{
@@ -116,7 +116,7 @@ func TestFilterByResourceTypeNoFilter(t *testing.T) {
 
 func TestFilterByResourceTypeMatch(t *testing.T) {
 	entry := store.ProfileEntry{
-		Attributes: []*commonpb.KeyValue{
+		ResourceAttributes: []*commonpb.KeyValue{
 			{
 				Key: "service.name",
 				Value: &commonpb.AnyValue{
@@ -134,7 +134,7 @@ func TestFilterByResourceTypeMatch(t *testing.T) {
 
 func TestFilterByResourceTypeNoMatch(t *testing.T) {
 	entry := store.ProfileEntry{
-		Attributes: []*commonpb.KeyValue{
+		ResourceAttributes: []*commonpb.KeyValue{
 			{
 				Key: "service.name",
 				Value: &commonpb.AnyValue{
@@ -152,7 +152,7 @@ func TestFilterByResourceTypeNoMatch(t *testing.T) {
 
 func TestFilterByResourceTypeMultiple(t *testing.T) {
 	entry1 := store.ProfileEntry{
-		Attributes: []*commonpb.KeyValue{
+		ResourceAttributes: []*commonpb.KeyValue{
 			{
 				Key: "service.name",
 				Value: &commonpb.AnyValue{
@@ -163,7 +163,7 @@ func TestFilterByResourceTypeMultiple(t *testing.T) {
 	}
 
 	entry2 := store.ProfileEntry{
-		Attributes: []*commonpb.KeyValue{
+		ResourceAttributes: []*commonpb.KeyValue{
 			{
 				Key: "service.name",
 				Value: &commonpb.AnyValue{
@@ -178,14 +178,14 @@ func TestFilterByResourceTypeMultiple(t *testing.T) {
 		t.Fatalf("Expected 1 matching entry, got %d", len(filtered))
 	}
 
-	if filtered[0].Attributes[0].Value.GetStringValue() != "service-a" {
+	if filtered[0].ResourceAttributes[0].Value.GetStringValue() != "service-a" {
 		t.Fatal("Wrong entry returned")
 	}
 }
 
 func TestFilterByResourceTypeNilAttributes(t *testing.T) {
 	entry := store.ProfileEntry{
-		Attributes: nil,
+		ResourceAttributes: nil,
 	}
 
 	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "service.name:test")
@@ -367,7 +367,7 @@ func TestToFlamegraphNoFrameType(t *testing.T) {
 
 func TestFilterByResourceTypeInvalidFormat(t *testing.T) {
 	entry := store.ProfileEntry{
-		Attributes: []*commonpb.KeyValue{
+		ResourceAttributes: []*commonpb.KeyValue{
 			{
 				Key: "service.name",
 				Value: &commonpb.AnyValue{
