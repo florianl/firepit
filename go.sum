@@ -20,8 +20,8 @@ github.com/rogpeppe/go-internal v1.16.0 h1:O9DK+vNMDVGLr2BeZqmpLeMjiMNkuXfcqntWb
 github.com/rogpeppe/go-internal v1.16.0/go.mod h1:DrUVZyrJU+txYW5/1kwtXQSMFio52ZOxX7yM1VHvnxs=
 go.opentelemetry.io/proto/otlp v1.11.1 h1:SCrPqH9NE5CmBrOqpjNCiT0X5mGwMyGERXdogfR7Yjw=
 go.opentelemetry.io/proto/otlp v1.11.1/go.mod h1:wq8W4aSf6bOy8RZyESOeQFr9Pu7wydWX/TY4sgvrTPg=
-go.opentelemetry.io/proto/otlp/collector/profiles/v1development v0.4.0 h1:bJQIZnyUB2qsRnbQBO0q5BSym96WCGEv48q2ATLI4b0=
-go.opentelemetry.io/proto/otlp/collector/profiles/v1development v0.4.0/go.mod h1:fdbY5aZcJlGPp9LnmKOhyHm3IXwu8l5hQT5gcuTtSGY=
+go.opentelemetry.io/proto/otlp/collector/profiles/v1development v0.4.1 h1:buJojifhJDy1KxIGqMTJZi2ofe4ePWmrMAvP/XwbD+Y=
+go.opentelemetry.io/proto/otlp/collector/profiles/v1development v0.4.1/go.mod h1:GQ77lWay7cMMRLKiZQV1ZKTERQWI+Lub4yoeD55yOE0=
 go.opentelemetry.io/proto/otlp/profiles/v1development v0.4.1 h1:/r6OKUO8PmUMAfAG0lIIZEWQZHa3o56LHMulrusszYo=
 go.opentelemetry.io/proto/otlp/profiles/v1development v0.4.1/go.mod h1:iXB90dhIyHY9OFlaMA3a4pCftOIs6gxbN4kXoLQEtmU=
 golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 h1:1P7xPZEwZMoBoz0Yze5Nx2/4pxj6nw9ZqHWXqP0iRgQ=
