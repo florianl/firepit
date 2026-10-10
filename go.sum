@@ -22,8 +22,8 @@ go.opentelemetry.io/proto/otlp v1.11.1 h1:SCrPqH9NE5CmBrOqpjNCiT0X5mGwMyGERXdogf
 go.opentelemetry.io/proto/otlp v1.11.1/go.mod h1:wq8W4aSf6bOy8RZyESOeQFr9Pu7wydWX/TY4sgvrTPg=
 go.opentelemetry.io/proto/otlp/collector/profiles/v1development v0.4.0 h1:bJQIZnyUB2qsRnbQBO0q5BSym96WCGEv48q2ATLI4b0=
 go.opentelemetry.io/proto/otlp/collector/profiles/v1development v0.4.0/go.mod h1:fdbY5aZcJlGPp9LnmKOhyHm3IXwu8l5hQT5gcuTtSGY=
-go.opentelemetry.io/proto/otlp/profiles/v1development v0.4.0 h1:K8fVW1jW1xn4iKqvoUED5jDQhlJcYhQ1houjU8clQp0=
-go.opentelemetry.io/proto/otlp/profiles/v1development v0.4.0/go.mod h1:pD9EreXXWprVGOuyN/YOTap/X0bKu0Za4yVOiW55/ic=
+go.opentelemetry.io/proto/otlp/profiles/v1development v0.4.1 h1:/r6OKUO8PmUMAfAG0lIIZEWQZHa3o56LHMulrusszYo=
+go.opentelemetry.io/proto/otlp/profiles/v1development v0.4.1/go.mod h1:iXB90dhIyHY9OFlaMA3a4pCftOIs6gxbN4kXoLQEtmU=
 golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 h1:1P7xPZEwZMoBoz0Yze5Nx2/4pxj6nw9ZqHWXqP0iRgQ=
 golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678/go.mod h1:AbB0pIl9nAr9wVwH+Z2ZpaocVmF5I4GyWCDIsVjR0bk=
 golang.org/x/mod v0.41.0 h1:qJmnOUb4YB+FsEuM3HcWucdZASCPGhsX6uljO6pog0c=
