@@ -108,7 +108,7 @@ func frameTypeFromLocation(dict *profilespb.ProfilesDictionary, loc *profilespb.
 			continue
 		}
 		if stringTableLookup(dict, attr.KeyStrindex) == "profile.frame.type" {
-			return attr.Value.GetStringValue()
+			return store.ResolveStringValue(dict.StringTable, attr.Value)
 		}
 	}
 	return ""
@@ -130,12 +130,14 @@ func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []s
 		if entry.ResourceAttributes == nil {
 			continue
 		}
+		st := entry.Dictionary.GetStringTable()
 		for _, attr := range entry.ResourceAttributes {
-			if attr.Key == key && attr.Value != nil {
-				if strVal := attr.Value.GetStringValue(); strVal == value {
-					filtered = append(filtered, entry)
-					break
-				}
+			if attr.Value == nil {
+				continue
+			}
+			if k, v := store.ResolveKeyValue(st, attr); k == key && v == value {
+				filtered = append(filtered, entry)
+				break
 			}
 		}
 	}

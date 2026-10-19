@@ -132,6 +132,27 @@ func TestFilterByResourceTypeMatch(t *testing.T) {
 	}
 }
 
+func TestFilterByResourceTypeDictionaryReferences(t *testing.T) {
+	entry := store.ProfileEntry{
+		Dictionary: &profilespb.ProfilesDictionary{
+			StringTable: []string{"", "process.executable.name", "dockerd"},
+		},
+		ResourceAttributes: []*commonpb.KeyValue{
+			{
+				KeyStrindex: 1,
+				Value: &commonpb.AnyValue{
+					Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: 2},
+				},
+			},
+		},
+	}
+
+	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "process.executable.name:dockerd")
+	if len(filtered) != 1 {
+		t.Fatalf("Expected 1 matching entry, got %d", len(filtered))
+	}
+}
+
 func TestFilterByResourceTypeNoMatch(t *testing.T) {
 	entry := store.ProfileEntry{
 		ResourceAttributes: []*commonpb.KeyValue{

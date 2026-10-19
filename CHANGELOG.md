@@ -2,6 +2,8 @@
 
 ## Untagged
 
+- Support index based keys and values in ResourceAttributes
+
 ## v0.2.0
 
 - Update d3-flame-graph from 4.1.3 to 5.0.0
