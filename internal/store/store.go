@@ -32,6 +32,39 @@ func stringTableLookup(st []string, idx int32) string {
 	return ""
 }
 
+// ResolveKeyValue returns the key and string value of kv. References into the
+// string table (key_strindex, string_value_strindex) take precedence over the
+// inline key and string_value.
+func ResolveKeyValue(st []string, kv *commonpb.KeyValue) (key, value string) {
+	key = kv.GetKey()
+	if idx := kv.GetKeyStrindex(); idx != 0 {
+		key = stringTableLookup(st, idx)
+	}
+	return key, ResolveStringValue(st, kv.GetValue())
+}
+
+// ResolveStringValue returns the string value of v, resolving
+// string_value_strindex against the string table if set.
+func ResolveStringValue(st []string, v *commonpb.AnyValue) string {
+	if ref, ok := v.GetValue().(*commonpb.AnyValue_StringValueStrindex); ok {
+		return stringTableLookup(st, ref.StringValueStrindex)
+	}
+	return v.GetStringValue()
+}
+
+// collectResourceTypes adds the "key:value" representation of all string
+// attributes in attrs to seen.
+func collectResourceTypes(seen map[string]bool, st []string, attrs []*commonpb.KeyValue) {
+	for _, attr := range attrs {
+		if attr.Value == nil {
+			continue
+		}
+		if key, strVal := ResolveKeyValue(st, attr); key != "" && strVal != "" {
+			seen[key+":"+strVal] = true
+		}
+	}
+}
+
 type Store struct {
 	mu              sync.RWMutex
 	entries         map[string][]ProfileEntry // sample type → profile entries
@@ -81,13 +114,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 			resAttrs = rp.Resource.Attributes
 
 			// Cache resource attributes for the filtering
-			for _, attr := range resAttrs {
-				if attr.Value != nil {
-					if strVal := attr.Value.GetStringValue(); strVal != "" {
-						seenResourceTypes[attr.Key+":"+strVal] = true
-					}
-				}
-			}
+			collectResourceTypes(seenResourceTypes, st, resAttrs)
 		}
 
 		for _, sp := range rp.ScopeProfiles {
@@ -221,13 +248,7 @@ func (s *Store) cleanup() {
 	seenResourceTypes := make(map[string]bool)
 	for st := range s.entries {
 		for _, entry := range s.entries[st] {
-			for _, attr := range entry.ResourceAttributes {
-				if attr.Value != nil {
-					if strVal := attr.Value.GetStringValue(); strVal != "" {
-						seenResourceTypes[attr.Key+":"+strVal] = true
-					}
-				}
-			}
+			collectResourceTypes(seenResourceTypes, entry.Dictionary.GetStringTable(), entry.ResourceAttributes)
 		}
 	}
 	s.resourceTypes = slices.Sorted(maps.Keys(seenResourceTypes))

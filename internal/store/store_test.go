@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -142,6 +143,69 @@ func TestResourceTypes(t *testing.T) {
 
 	if !found["version:v1.0"] {
 		t.Fatal("Expected 'version:v1.0' in resource types")
+	}
+}
+
+func TestResourceTypesDictionaryReferences(t *testing.T) {
+	st := New(5*time.Minute, 10*time.Second, 0)
+	defer st.Close()
+
+	dict := &profilespb.ProfilesDictionary{
+		StringTable: []string{"", "samples", "count", "process.executable.name", "dockerd", "process.executable.path"},
+	}
+
+	profile := &profilespb.Profile{
+		SampleType: &profilespb.ValueType{
+			TypeStrindex: 1,
+			UnitStrindex: 2,
+		},
+		Samples:      []*profilespb.Sample{},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
+	}
+
+	rp := &profilespb.ResourceProfiles{
+		Resource: &resourcepb.Resource{
+			Attributes: []*commonpb.KeyValue{
+				{
+					KeyStrindex: 3,
+					Value: &commonpb.AnyValue{
+						Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: 4},
+					},
+				},
+				{
+					// key_strindex takes precedence over key
+					Key:         "ignored",
+					KeyStrindex: 5,
+					Value: &commonpb.AnyValue{
+						Value: &commonpb.AnyValue_StringValue{StringValue: "/usr/bin/dockerd"},
+					},
+				},
+				{
+					KeyStrindex: 0,
+					Value: &commonpb.AnyValue{
+						Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: 4},
+					},
+				},
+			},
+		},
+		ScopeProfiles: []*profilespb.ScopeProfiles{
+			{
+				Profiles: []*profilespb.Profile{profile},
+			},
+		},
+	}
+
+	st.Add([]*profilespb.ResourceProfiles{rp}, dict)
+
+	want := []string{"process.executable.name:dockerd", "process.executable.path:/usr/bin/dockerd"}
+	if got := st.ResourceTypes(); !slices.Equal(got, want) {
+		t.Fatalf("Expected %v, got %v", want, got)
+	}
+
+	// cleanup recomputes the resource types from the stored entries
+	st.cleanup()
+	if got := st.ResourceTypes(); !slices.Equal(got, want) {
+		t.Fatalf("Expected %v after cleanup, got %v", want, got)
 	}
 }
 
