@@ -22,6 +22,7 @@ All options can be set via command-line flags or environment variables. Flags ta
 | `-cleanup-interval` | `CLEANUP_INTERVAL` | `30s` | How often the background cleanup job runs to evict expired profiles |
 | `-max-body-size` | `MAX_BODY_SIZE` | `33554432` (32 MiB) | Maximum request body size in bytes for HTTP/OTLP ingestion |
 | `-max-storage-bytes` | `MAX_STORAGE_BYTES` | `524288000` (500 MiB) | Maximum total in-memory profile storage in bytes; `0` disables the limit |
+| `-virtual-frames` | `VIRTUAL_FRAMES` | `""` | Comma separated attribute keys (e.g. `service.name,thread.name`) that are preselected as virtual frames in the flame graph view. See [Virtual frames](#virtual-frames). |
 | `-pprof` | — | `false` | Expose Go runtime profiling data under `<base-path>/debug/pprof` |
 
 ## Usage
@@ -41,3 +42,11 @@ The same configuration via environment variables:
 ```
 GRPC_ADDR=:14317 HTTP_ADDR=:14318 WEB_ADDR=:9090 PROFILE_TTL=10m firepit
 ```
+
+## Virtual frames
+
+Virtual frames are synthetic frames, derived from resource or sample attributes, that are placed on top of each stack in the flame graph view. They group the flame graph by attribute values, e.g. by `service.name` and then by `thread.name`. Each virtual frame is named `<key>=<value>`. If an attribute is missing, its value is shown as `<unset>`. If a key is set both as a sample attribute and as a resource attribute, the sample attribute is used.
+
+Virtual frames are selected in the Web UI with the *Virtual frames* dropdown, in the order they should be nested. By default none are selected; `-virtual-frames` / `VIRTUAL_FRAMES` sets a preselection.
+
+The `/api/flamegraph`, `/api/sandwich` and `/api/sandwich-detail` endpoints accept a `virtualFrames` query parameter with a comma separated list of keys. If the parameter is missing, the configured keys are used; if it is empty, no virtual frames are added.

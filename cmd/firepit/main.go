@@ -55,6 +55,8 @@ type Config struct {
 	MaxBodySize      int64
 	MaxStorageBytes  int64
 	RuntimeProfiling bool
+	// VirtualFrames lists attribute keys rendered as virtual frames by default.
+	VirtualFrames []string
 }
 
 // loadConfig loads configuration from environment variables and command-line flags
@@ -72,7 +74,11 @@ func loadConfig() Config {
 	flag.Int64Var(&cfg.MaxStorageBytes, "max-storage-bytes", cfg.MaxStorageBytes, "Maximum total profile storage in bytes (0 = unlimited)")
 	flag.BoolVar(&cfg.RuntimeProfiling, "pprof", false, "Serve runtime profiling data via http")
 	flag.StringVar(&cfg.FromFile, "from-file", cfg.FromFile, "Path to a JSONL file of proto-JSON encoded profiles to load at startup")
+	virtualFrames := strings.Join(cfg.VirtualFrames, ",")
+	flag.StringVar(&virtualFrames, "virtual-frames", virtualFrames, "Comma separated attribute keys rendered as virtual frames on top of each stack (e.g. service.name,thread.name)")
 	flag.Parse()
+
+	cfg.VirtualFrames = profiler.ParseKeyList(virtualFrames)
 
 	bp, err := normalizeBasePath(cfg.BasePath)
 	if err != nil {
@@ -161,6 +167,10 @@ func loadConfigFromEnv(getenv func(string) string) Config {
 		cfg.FromFile = ff
 	}
 
+	if vf := getenv("VIRTUAL_FRAMES"); vf != "" {
+		cfg.VirtualFrames = profiler.ParseKeyList(vf)
+	}
+
 	return cfg
 }
 
@@ -180,7 +190,8 @@ func main() {
 	slog.Info("Configuration loaded", "grpc_addr", cfg.GRPCAddr, "http_addr", cfg.HTTPAddr,
 		"web_addr", cfg.WebAddr, "base_path", cfg.BasePath, "profile_ttl", cfg.ProfileTTL,
 		"cleanup_interval", cfg.CleanupInterval, "max_body_size", cfg.MaxBodySize,
-		"max_storage_bytes", cfg.MaxStorageBytes, "from_file", cfg.FromFile)
+		"max_storage_bytes", cfg.MaxStorageBytes, "from_file", cfg.FromFile,
+		"virtual_frames", cfg.VirtualFrames)
 
 	var wg sync.WaitGroup
 	var initGroup sync.WaitGroup
@@ -332,12 +343,14 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 		strippedFileServer.ServeHTTP(w, r)
 	}))
 
-	mux.HandleFunc(base+"/api/flamegraph", handleFlamegraph(st))
+	mux.HandleFunc(base+"/api/flamegraph", handleFlamegraph(st, cfg.VirtualFrames))
 	mux.HandleFunc(base+"/api/flamescope", handleFlamescope(st))
-	mux.HandleFunc(base+"/api/sandwich", handleSandwich(st))
-	mux.HandleFunc(base+"/api/sandwich-detail", handleSandwichDetail(st))
+	mux.HandleFunc(base+"/api/sandwich", handleSandwich(st, cfg.VirtualFrames))
+	mux.HandleFunc(base+"/api/sandwich-detail", handleSandwichDetail(st, cfg.VirtualFrames))
 	mux.HandleFunc(base+"/api/profiles", handleProfiles(st))
 	mux.HandleFunc(base+"/api/resource-types", handleResourceTypes(st))
+	mux.HandleFunc(base+"/api/attribute-keys", handleAttributeKeys(st))
+	mux.HandleFunc(base+"/api/config", handleConfig(cfg))
 
 	prefix := base + "/debug/pprof"
 	if cfg.RuntimeProfiling {
@@ -400,7 +413,17 @@ func startOTLPHTTPServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.
 	return server
 }
 
-func handleFlamegraph(st *store.Store) http.HandlerFunc {
+// flamegraphOptions builds the flame graph options for r. The virtualFrames
+// query parameter, if present, overrides the configured default keys.
+func flamegraphOptions(r *http.Request, defaultVirtualFrames []string) profiler.Options {
+	keys := defaultVirtualFrames
+	if q := r.URL.Query(); q.Has("virtualFrames") {
+		keys = profiler.ParseKeyList(q.Get("virtualFrames"))
+	}
+	return profiler.Options{VirtualFrameKeys: keys}
+}
+
+func handleFlamegraph(st *store.Store, defaultVirtualFrames []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -411,13 +434,14 @@ func handleFlamegraph(st *store.Store) http.HandlerFunc {
 		}
 
 		resourceType := r.URL.Query().Get("resourceType")
+		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		types := st.SampleTypes()
 		graphs := make([]profiler.NamedFlamegraph, 0, len(types))
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
 			entries = profiler.FilterByResourceType(entries, resourceType)
-			root := profiler.ToFlamegraph(entries)
+			root := profiler.ToFlamegraph(entries, opts)
 			graphs = append(graphs, profiler.NamedFlamegraph{Type: t, Root: root})
 		}
 
@@ -491,7 +515,45 @@ func handleResourceTypes(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleSandwich(st *store.Store) http.HandlerFunc {
+func handleAttributeKeys(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+			return
+		}
+
+		keys := st.AttributeKeys()
+		if keys == nil {
+			keys = []string{}
+		}
+
+		json.NewEncoder(w).Encode(keys)
+	}
+}
+
+func handleConfig(cfg Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+			return
+		}
+
+		virtualFrames := cfg.VirtualFrames
+		if virtualFrames == nil {
+			virtualFrames = []string{}
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{"virtualFrames": virtualFrames})
+	}
+}
+
+func handleSandwich(st *store.Store, defaultVirtualFrames []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -502,13 +564,14 @@ func handleSandwich(st *store.Store) http.HandlerFunc {
 		}
 
 		resourceType := r.URL.Query().Get("resourceType")
+		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		types := st.SampleTypes()
 		sandwiches := make([]profiler.NamedSandwich, 0, len(types))
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
 			entries = profiler.FilterByResourceType(entries, resourceType)
-			root := profiler.ToFlamegraph(entries)
+			root := profiler.ToFlamegraph(entries, opts)
 			data := profiler.ToSandwich(root)
 			sandwiches = append(sandwiches, profiler.NamedSandwich{Type: t, Data: data})
 		}
@@ -521,7 +584,7 @@ func handleSandwich(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleSandwichDetail(st *store.Store) http.HandlerFunc {
+func handleSandwichDetail(st *store.Store, defaultVirtualFrames []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -534,6 +597,7 @@ func handleSandwichDetail(st *store.Store) http.HandlerFunc {
 		resourceType := r.URL.Query().Get("resourceType")
 		functionName := r.URL.Query().Get("functionName")
 		sampleType := r.URL.Query().Get("sampleType")
+		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		if functionName == "" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -551,7 +615,7 @@ func handleSandwichDetail(st *store.Store) http.HandlerFunc {
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
 			entries = profiler.FilterByResourceType(entries, resourceType)
-			root := profiler.ToFlamegraph(entries)
+			root := profiler.ToFlamegraph(entries, opts)
 			sandwich := profiler.ExtractSandwichGraphs(root, functionName)
 			result[t] = sandwich
 			if sandwich.Callers != nil || sandwich.Callees != nil {

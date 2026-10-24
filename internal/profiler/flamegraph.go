@@ -10,8 +10,25 @@ import (
 	"sync"
 
 	"github.com/florianl/firepit/internal/store"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
 )
+
+// VirtualFrameType is the frame type of synthetic frames that are derived
+// from resource or sample attributes rather than from code locations.
+const VirtualFrameType = "virtual"
+
+// unsetAttrValue is used for virtual frames whose attribute is not present
+// on a sample or its resource.
+const unsetAttrValue = "<unset>"
+
+// Options controls how profiles are converted into a flame graph.
+type Options struct {
+	// VirtualFrameKeys lists attribute keys that are rendered as virtual
+	// frames on top of each stack, outermost first. Sample attributes take
+	// precedence over resource attributes with the same key.
+	VirtualFrameKeys []string
+}
 
 var stackCachePool = sync.Pool{
 	New: func() any {
@@ -144,7 +161,64 @@ func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []s
 	return filtered
 }
 
-func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
+// ParseKeyList splits a comma separated list of attribute keys, trimming
+// whitespace and dropping empty and duplicate keys while preserving order.
+func ParseKeyList(s string) []string {
+	var keys []string
+	for k := range strings.SplitSeq(s, ",") {
+		k = strings.TrimSpace(k)
+		if k != "" && !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// attrValueString returns a string representation of scalar attribute values.
+func attrValueString(st []string, v *commonpb.AnyValue) string {
+	switch val := v.GetValue().(type) {
+	case *commonpb.AnyValue_StringValue, *commonpb.AnyValue_StringValueStrindex:
+		return store.ResolveStringValue(st, v)
+	case *commonpb.AnyValue_IntValue:
+		return strconv.FormatInt(val.IntValue, 10)
+	case *commonpb.AnyValue_BoolValue:
+		return strconv.FormatBool(val.BoolValue)
+	case *commonpb.AnyValue_DoubleValue:
+		return strconv.FormatFloat(val.DoubleValue, 'g', -1, 64)
+	}
+	return ""
+}
+
+// virtualFrameName formats the name of a virtual frame.
+func virtualFrameName(key, value string) string {
+	if value == "" {
+		value = unsetAttrValue
+	}
+	return key + "=" + value
+}
+
+// resourceVirtualFrames returns one virtual frame per key, resolved against
+// the resource attributes of entry.
+func resourceVirtualFrames(entry store.ProfileEntry, keys []string) []FrameInfo {
+	if len(keys) == 0 {
+		return nil
+	}
+	st := entry.Dictionary.GetStringTable()
+	frames := make([]FrameInfo, len(keys))
+	for i, key := range keys {
+		var value string
+		for _, attr := range entry.ResourceAttributes {
+			if k := store.ResolveKey(st, attr); k == key {
+				value = attrValueString(st, attr.GetValue())
+				break
+			}
+		}
+		frames[i] = FrameInfo{Name: virtualFrameName(key, value), FrameType: VirtualFrameType}
+	}
+	return frames
+}
+
+func ToFlamegraph(entries []store.ProfileEntry, opts Options) *FlameNode {
 	root := &FlameNode{
 		Name:        "root",
 		Value:       0,
@@ -156,8 +230,9 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 	for _, entry := range entries {
 		if entry.Profile != nil && entry.Dictionary != nil {
 			profileCount++
+			resFrames := resourceVirtualFrames(entry, opts.VirtualFrameKeys)
 			stackCache := stackCachePool.Get().(map[int32][]FrameInfo)
-			processProfile(root, entry.Profile, entry.Dictionary, stackCache)
+			processProfile(root, entry.Profile, entry.Dictionary, stackCache, opts.VirtualFrameKeys, resFrames)
 			clear(stackCache)
 			stackCachePool.Put(stackCache)
 		}
@@ -170,9 +245,17 @@ func ToFlamegraph(entries []store.ProfileEntry) *FlameNode {
 	return root
 }
 
-func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo) {
+func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo,
+	virtualKeys []string, resFrames []FrameInfo,
+) {
 	if profile == nil || len(profile.Samples) == 0 {
 		return
+	}
+
+	// prefixBuf is reused across samples, as insertStack does not retain it.
+	var prefixBuf []FrameInfo
+	if len(virtualKeys) > 0 {
+		prefixBuf = make([]FrameInfo, len(virtualKeys))
 	}
 
 	for _, sample := range profile.Samples {
@@ -198,8 +281,41 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 			continue
 		}
 
-		insertStack(root, stack, value)
+		prefix := resFrames
+		if len(virtualKeys) > 0 && len(sample.AttributeIndices) > 0 {
+			prefix = sampleVirtualFrames(prefixBuf, sample, dict, virtualKeys, resFrames)
+		}
+
+		insertStack(root, prefix, stack, value)
 	}
+}
+
+// sampleVirtualFrames fills buf with resFrames and overrides frames whose key
+// is set as a sample attribute. It returns resFrames if no key matched.
+func sampleVirtualFrames(buf []FrameInfo, sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, keys []string, resFrames []FrameInfo) []FrameInfo {
+	matched := false
+	for _, attrIdx := range sample.AttributeIndices {
+		attr := attributeTableLookup(dict, attrIdx)
+		if attr == nil || attr.Value == nil {
+			continue
+		}
+		i := slices.Index(keys, stringTableLookup(dict, attr.KeyStrindex))
+		if i < 0 {
+			continue
+		}
+		if !matched {
+			copy(buf, resFrames)
+			matched = true
+		}
+		buf[i] = FrameInfo{
+			Name:      virtualFrameName(keys[i], attrValueString(dict.StringTable, attr.Value)),
+			FrameType: VirtualFrameType,
+		}
+	}
+	if !matched {
+		return resFrames
+	}
+	return buf
 }
 
 func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo) []FrameInfo {
@@ -266,36 +382,45 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 	return stack
 }
 
-func insertStack(root *FlameNode, stack []FrameInfo, value int64) {
-	current := root
+// insertStack adds value along the path of prefix followed by stack.
+func insertStack(root *FlameNode, prefix, stack []FrameInfo, value int64) {
 	root.Value += value
-
-	for _, frame := range stack {
-		var child *FlameNode
-		var exists bool
-		if current.childrenMap != nil {
-			child, exists = current.childrenMap[frame.Name]
-		}
-		if !exists {
-			child = &FlameNode{
-				Name:        frame.Name,
-				Filename:    frame.Filename,
-				FrameType:   frame.FrameType,
-				Value:       0,
-				Children:    []*FlameNode{},
-				childrenMap: nil,
-			}
-			current.Children = append(current.Children, child)
-
-			if current.childrenMap == nil {
-				current.childrenMap = make(map[string]*FlameNode)
-			}
-			current.childrenMap[frame.Name] = child
-		}
-
-		child.Value += value
-		current = child
+	current := root
+	for _, frame := range prefix {
+		current = insertFrame(current, frame, value)
 	}
+	for _, frame := range stack {
+		current = insertFrame(current, frame, value)
+	}
+}
+
+// insertFrame adds value to the child of current matching frame, creating it
+// if needed, and returns that child.
+func insertFrame(current *FlameNode, frame FrameInfo, value int64) *FlameNode {
+	var child *FlameNode
+	var exists bool
+	if current.childrenMap != nil {
+		child, exists = current.childrenMap[frame.Name]
+	}
+	if !exists {
+		child = &FlameNode{
+			Name:        frame.Name,
+			Filename:    frame.Filename,
+			FrameType:   frame.FrameType,
+			Value:       0,
+			Children:    []*FlameNode{},
+			childrenMap: nil,
+		}
+		current.Children = append(current.Children, child)
+
+		if current.childrenMap == nil {
+			current.childrenMap = make(map[string]*FlameNode)
+		}
+		current.childrenMap[frame.Name] = child
+	}
+
+	child.Value += value
+	return child
 }
 
 func ToSandwich(root *FlameNode) *SandwichData {
@@ -345,84 +470,51 @@ func ExtractSandwichGraphs(root *FlameNode, targetName string) *SandwichGraphs {
 }
 
 func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
-	// Find the path to target and build an inverted tree for icicle visualization
-	var pathToTarget []*FlameNode
-	findPathToTarget(originalRoot, targetName, []*FlameNode{}, &pathToTarget)
+	// Build an inverted tree for icicle visualization: the target at the root
+	// with its callers as descendants. Every occurrence of the target is merged,
+	// each caller accumulating the value of the target it leads to.
+	newRoot := &FlameNode{Name: targetName, Children: []*FlameNode{}, childrenMap: nil}
+	found := false
 
-	if len(pathToTarget) == 0 {
-		return &FlameNode{Name: targetName, Children: []*FlameNode{}, childrenMap: nil}
+	var walk func(node *FlameNode, callers []*FlameNode)
+	walk = func(node *FlameNode, callers []*FlameNode) {
+		if node.Name == targetName {
+			if !found {
+				newRoot.Filename = node.Filename
+				newRoot.FrameType = node.FrameType
+				found = true
+			}
+			newRoot.Value += node.Value
+
+			// Add callers in reverse order, starting with the immediate caller
+			current := newRoot
+			for i := len(callers) - 1; i >= 0; i-- {
+				c := callers[i]
+				current = insertFrame(current, FrameInfo{Name: c.Name, Filename: c.Filename, FrameType: c.FrameType}, node.Value)
+			}
+			return
+		}
+
+		callers = append(callers, node)
+		for _, child := range node.Children {
+			walk(child, callers)
+		}
 	}
 
-	// Get target node properties (last in path)
-	targetNode := pathToTarget[len(pathToTarget)-1]
-
-	// Build inverted tree: target at root (top, widest) with callers as descendants
-	// pathToTarget[0] is root (artificial), pathToTarget[len-1] is targetFunc
-	// Result: targetFunc (root) -> funcB -> funcA -> ... (excluding artificial root)
-	newRoot := &FlameNode{
-		Name:        targetName,
-		Value:       targetNode.Value,
-		Filename:    targetNode.Filename,
-		FrameType:   targetNode.FrameType,
-		Children:    []*FlameNode{},
-		childrenMap: nil,
-	}
-
-	// Add callers in reverse order (from immediate caller up, but excluding the artificial root node)
-	currentNode := newRoot
-	for i := len(pathToTarget) - 2; i > 0; i-- {
-		node := pathToTarget[i]
-		newNode := &FlameNode{
-			Name:        node.Name,
-			Value:       node.Value,
-			Filename:    node.Filename,
-			FrameType:   node.FrameType,
-			Children:    []*FlameNode{},
-			childrenMap: nil,
-		}
-		currentNode.Children = append(currentNode.Children, newNode)
-		if currentNode.childrenMap == nil {
-			currentNode.childrenMap = make(map[string]*FlameNode)
-		}
-		currentNode.childrenMap[newNode.Name] = newNode
-		currentNode = newNode
+	// Skip the artificial root node
+	for _, child := range originalRoot.Children {
+		walk(child, nil)
 	}
 
 	return newRoot
 }
 
-func findPathToTarget(node *FlameNode, targetName string, currentPath []*FlameNode, resultPath *[]*FlameNode) bool {
-	currentPath = append(currentPath, node)
-
-	if node.Name == targetName {
-		*resultPath = make([]*FlameNode, len(currentPath))
-		copy(*resultPath, currentPath)
-		return true
-	}
-
-	for _, child := range node.Children {
-		if findPathToTarget(child, targetName, currentPath, resultPath) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func buildCalleeGraph(originalRoot *FlameNode, targetName string) *FlameNode {
-	// Find target node to get its properties
-	targetNode := findTargetNode(originalRoot, targetName)
-
 	// Create root as the target function
 	root := &FlameNode{
 		Name:        targetName,
 		Children:    []*FlameNode{},
 		childrenMap: nil,
-	}
-	if targetNode != nil {
-		root.Value = targetNode.Value
-		root.Filename = targetNode.Filename
-		root.FrameType = targetNode.FrameType
 	}
 
 	// Find all callees (full subtrees) of the target
@@ -431,21 +523,14 @@ func buildCalleeGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 	return root
 }
 
-func findTargetNode(node *FlameNode, targetName string) *FlameNode {
-	if node.Name == targetName {
-		return node
-	}
-	for _, child := range node.Children {
-		if result := findTargetNode(child, targetName); result != nil {
-			return result
-		}
-	}
-	return nil
-}
-
 func extractCalleeSubtrees(node *FlameNode, targetName string, targetRoot *FlameNode) {
 	if node.Name == targetName {
-		// Found target - copy all its children (full subtrees) to targetRoot
+		// Found target - accumulate its value and copy all its children (full subtrees) to targetRoot
+		if targetRoot.Value == 0 {
+			targetRoot.Filename = node.Filename
+			targetRoot.FrameType = node.FrameType
+		}
+		targetRoot.Value += node.Value
 		for _, child := range node.Children {
 			copiedChild := copyFlameNode(child)
 			var existing *FlameNode
@@ -518,7 +603,8 @@ func mergeFlameNodes(dst, src *FlameNode) {
 }
 
 func collectFunctionStats(node *FlameNode, stats map[string]*FunctionStats) {
-	if node.Name == "root" {
+	// The synthetic root and virtual frames are not functions.
+	if node.Name == "root" || node.FrameType == VirtualFrameType {
 		for _, child := range node.Children {
 			collectFunctionStats(child, stats)
 		}
