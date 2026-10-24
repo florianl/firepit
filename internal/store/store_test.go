@@ -474,3 +474,57 @@ func TestMemoryLimitDisabled(t *testing.T) {
 		t.Fatalf("Expected 10 entries after cleanup with limit disabled, got %d", len(entries))
 	}
 }
+
+func TestAttributeKeys(t *testing.T) {
+	st := New(5*time.Minute, 10*time.Second, 0)
+	defer st.Close()
+
+	dict := &profilespb.ProfilesDictionary{
+		StringTable: []string{"", "cpu", "thread.name", "worker"},
+		AttributeTable: []*profilespb.KeyValueAndUnit{
+			{},
+			{
+				KeyStrindex: 2,
+				Value:       &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "worker"}},
+			},
+		},
+	}
+
+	profile := &profilespb.Profile{
+		SampleType: &profilespb.ValueType{TypeStrindex: 1},
+		Samples: []*profilespb.Sample{
+			{AttributeIndices: []int32{1}},
+			{AttributeIndices: []int32{1, 99}}, // out of range index is ignored
+		},
+		TimeUnixNano: uint64(time.Now().UnixNano()),
+	}
+
+	rp := &profilespb.ResourceProfiles{
+		Resource: &resourcepb.Resource{
+			Attributes: []*commonpb.KeyValue{
+				{
+					Key:   "service.name",
+					Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "a"}},
+				},
+				{
+					KeyStrindex: 2, // non-string values still contribute their key
+					Value:       &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: 1}},
+				},
+			},
+		},
+		ScopeProfiles: []*profilespb.ScopeProfiles{{Profiles: []*profilespb.Profile{profile}}},
+	}
+
+	st.Add([]*profilespb.ResourceProfiles{rp}, dict)
+
+	want := []string{"service.name", "thread.name"}
+	if got := st.AttributeKeys(); !slices.Equal(got, want) {
+		t.Fatalf("AttributeKeys() = %v, want %v", got, want)
+	}
+
+	// Keys must survive a cleanup while the entries are retained.
+	st.cleanup()
+	if got := st.AttributeKeys(); !slices.Equal(got, want) {
+		t.Fatalf("AttributeKeys() after cleanup = %v, want %v", got, want)
+	}
+}

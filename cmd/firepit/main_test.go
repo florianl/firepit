@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -69,6 +70,17 @@ func TestLoadConfig(t *testing.T) {
 				}
 				if c.MaxStorageBytes != 1000000000 {
 					t.Errorf("expected MaxStorageBytes 1000000000, got %d", c.MaxStorageBytes)
+				}
+			},
+		},
+		{
+			name: "virtual frames env var",
+			env: map[string]string{
+				"VIRTUAL_FRAMES": "service.name, thread.name,",
+			},
+			validate: func(c *Config) {
+				if want := []string{"service.name", "thread.name"}; !slices.Equal(c.VirtualFrames, want) {
+					t.Errorf("expected VirtualFrames %v, got %v", want, c.VirtualFrames)
 				}
 			},
 		},
@@ -262,7 +274,7 @@ func TestHandleFlamegraph(t *testing.T) {
 	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
 	defer st.Close()
 
-	handler := handleFlamegraph(st)
+	handler := handleFlamegraph(st, nil)
 
 	tests := []struct {
 		name       string
@@ -487,5 +499,83 @@ func TestHandleHeatMap(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFlamegraphOptions(t *testing.T) {
+	defaults := []string{"service.name"}
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"no parameter uses default", "", []string{"service.name"}},
+		{"empty parameter disables virtual frames", "?virtualFrames=", nil},
+		{"parameter overrides default", "?virtualFrames=thread.name,process.pid", []string{"thread.name", "process.pid"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/flamegraph"+tt.query, nil)
+			if got := flamegraphOptions(req, defaults).VirtualFrameKeys; !slices.Equal(got, tt.want) {
+				t.Errorf("VirtualFrameKeys = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandleConfig(t *testing.T) {
+	handler := handleConfig(Config{VirtualFrames: []string{"service.name"}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	var result struct {
+		VirtualFrames []string `json:"virtualFrames"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if want := []string{"service.name"}; !slices.Equal(result.VirtualFrames, want) {
+		t.Errorf("virtualFrames = %v, want %v", result.VirtualFrames, want)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/config", nil)
+	w = httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected status 405, got %d", w.Code)
+	}
+}
+
+func TestHandleAttributeKeys(t *testing.T) {
+	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
+	defer st.Close()
+
+	handler := handleAttributeKeys(st)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/attribute-keys", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	var result []string
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if result == nil || len(result) != 0 {
+		t.Errorf("expected empty JSON array, got %s", w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/attribute-keys", nil)
+	w = httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected status 405, got %d", w.Code)
 	}
 }

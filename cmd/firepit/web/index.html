@@ -158,6 +158,40 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+        .vframe-row {
+            margin-top: 10px;
+        }
+        .vframe-chips {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .vframe-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background-color: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            color: white;
+            padding: 3px 4px 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .vframe-chip button {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1;
+            padding: 0 4px;
+            opacity: 0.7;
+        }
+        .vframe-chip button:hover {
+            opacity: 1;
+        }
         .filter-container {
             max-height: 0;
             overflow: hidden;
@@ -244,6 +278,7 @@
         .view-mode-filter label {
             color: white;
             font-size: 13px;
+            white-space: nowrap;
         }
         .view-mode-filter select {
             background-color: rgba(255, 255, 255, 0.1);
@@ -450,6 +485,13 @@
                 <span>Time range: <span id="time-range">-</span></span>
             </div>
         </div>
+        <div class="view-mode-filter vframe-row" id="vframe-filter">
+            <label for="vframe-add-select">Virtual frames:</label>
+            <div id="vframe-chips" class="vframe-chips"></div>
+            <select id="vframe-add-select">
+                <option value="">+ add</option>
+            </select>
+        </div>
     </div>
 
     <div id="tab-strip" class="tab-strip" style="display:none"></div>
@@ -479,6 +521,11 @@
         let viewMode = 'flamegraph';
         let currentHeatMaps = null;
         let sortMode = 'time-ordered';
+        // Attribute keys rendered as virtual frames in the flame graph view,
+        // outermost first. None are selected unless configured on the server.
+        let virtualFrames = [];
+        let attributeKeys = [];
+        let lastAttributeKeysKey = '';
 
         function getFrameTypeColor(frameType, saturation) {
             const c = (b, r) => b + Math.round(r * saturation);
@@ -496,6 +543,7 @@
                 case 'go':     return `rgb(${c(0,50)},${c(173,45)},${c(196,40)})`;
                 case 'rust':   return `rgb(${c(183,50)},${c(65,40)},${c(14,25)})`;
                 case 'luajit': return `rgb(${c(0,50)},${c(160,50)},${c(210,40)})`;
+                case 'virtual': return `rgb(${c(150,40)},${c(155,40)},${c(165,40)})`;
                 default:       return null;
             }
         }
@@ -542,6 +590,57 @@
             }
         }
 
+        function rebuildVirtualFrameControls() {
+            const chips = document.getElementById('vframe-chips');
+            chips.innerHTML = '';
+            virtualFrames.forEach((key, i) => {
+                const chip = document.createElement('span');
+                chip.className = 'vframe-chip';
+                chip.textContent = key;
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.title = 'Remove ' + key;
+                remove.textContent = '×';
+                remove.addEventListener('click', () => {
+                    virtualFrames = virtualFrames.filter((_, j) => j !== i);
+                    rebuildVirtualFrameControls();
+                    updateChart();
+                });
+                chip.appendChild(remove);
+                chips.appendChild(chip);
+            });
+
+            const addSelect = document.getElementById('vframe-add-select');
+            addSelect.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '+ add';
+            addSelect.appendChild(placeholder);
+            attributeKeys
+                .filter(k => !virtualFrames.includes(k))
+                .forEach(k => {
+                    const o = document.createElement('option');
+                    o.value = k;
+                    o.textContent = k;
+                    addSelect.appendChild(o);
+                });
+            addSelect.value = '';
+            addSelect.disabled = addSelect.options.length <= 1;
+        }
+
+        // Appends the shared query parameters for flame graph based endpoints.
+        // Virtual frames are only selectable in, and applied to, the flame graph view.
+        function appendCommonParams(params) {
+            if (selectedResourceType) params.set('resourceType', selectedResourceType);
+            params.set('virtualFrames', viewMode === 'flamegraph' ? virtualFrames.join(',') : '');
+            return params;
+        }
+
+        function toQuery(params) {
+            const qs = params.toString();
+            return qs ? '?' + qs : '';
+        }
+
         function sanitizeId(str) {
             return str.replace(/[()]/g, '_');
         }
@@ -580,6 +679,7 @@
                 if (isPaused) filterContainer.classList.add('visible');
                 sortFilter.style.display = 'flex';
             }
+            document.getElementById('vframe-filter').style.display = viewMode === 'flamegraph' ? 'flex' : 'none';
             updateChart();
         }
 
@@ -706,7 +806,8 @@ function applyFrameFilter() {
                 unit: activeGraph.unit || null,
                 data: activeGraph.root,
                 exportedAt: new Date().toISOString(),
-                resourceType: selectedResourceType || 'all'
+                resourceType: selectedResourceType || 'all',
+                virtualFrames: virtualFrames
             };
 
             const jsonString = JSON.stringify(exportData, null, 2);
@@ -722,7 +823,7 @@ function applyFrameFilter() {
         }
 
         function updateChart() {
-            const query = selectedResourceType ? '?resourceType=' + encodeURIComponent(selectedResourceType) : '';
+            const query = toQuery(appendCommonParams(new URLSearchParams()));
 
             if (viewMode === 'heatmap') {
                 fetchAndRenderHeatMap(query);
@@ -741,6 +842,19 @@ function applyFrameFilter() {
                         if (data.timeRange)
                             document.getElementById('time-range').textContent = data.timeRange;
                     }
+                })
+                .catch(() => {});
+
+            // Attribute keys available as virtual frames
+            fetch(window.__BASE_PATH__ + '/api/attribute-keys')
+                .then(r => r.json())
+                .then(keys => {
+                    const newKeys = keys || [];
+                    const newKey = JSON.stringify(newKeys);
+                    if (newKey === lastAttributeKeysKey) return;
+                    lastAttributeKeysKey = newKey;
+                    attributeKeys = newKeys;
+                    rebuildVirtualFrameControls();
                 })
                 .catch(() => {});
 
@@ -1174,10 +1288,10 @@ function applyFrameFilter() {
         }
 
         function fetchSandwichDetail(functionName, sampleType, resourceType, rightPanel) {
-            let query = '?functionName=' + encodeURIComponent(functionName) + '&sampleType=' + encodeURIComponent(sampleType);
-            if (resourceType) {
-                query += '&resourceType=' + encodeURIComponent(resourceType);
-            }
+            const params = new URLSearchParams({ functionName: functionName, sampleType: sampleType });
+            if (resourceType) params.set('resourceType', resourceType);
+            params.set('virtualFrames', '');
+            const query = toQuery(params);
 
             fetch(window.__BASE_PATH__ + '/api/sandwich-detail' + query)
                 .then(r => r.json())
@@ -1754,8 +1868,20 @@ function applyFrameFilter() {
         }
 
         function init() {
-            updateChart();
-            updateInterval = setInterval(updateChart, 5000);
+            // Load the configured default virtual frames before the first render.
+            fetch(window.__BASE_PATH__ + '/api/config')
+                .then(r => r.json())
+                .then(cfg => {
+                    if (cfg && Array.isArray(cfg.virtualFrames)) {
+                        virtualFrames = cfg.virtualFrames;
+                        rebuildVirtualFrameControls();
+                    }
+                })
+                .catch(() => {})
+                .finally(() => {
+                    updateChart();
+                    updateInterval = setInterval(updateChart, 5000);
+                });
             document.getElementById('pause-btn').addEventListener('click', togglePause);
             document.getElementById('view-select').addEventListener('change', (e) => {
                 onViewModeChange(e.target.value);
@@ -1770,6 +1896,13 @@ function applyFrameFilter() {
             document.getElementById('resource-value-select').addEventListener('change', (e) => {
                 selectedAttrValue = e.target.value;
                 applyResourceFilter();
+                updateChart();
+            });
+            document.getElementById('vframe-add-select').addEventListener('change', (e) => {
+                const key = e.target.value;
+                if (!key) return;
+                virtualFrames = [...virtualFrames, key];
+                rebuildVirtualFrameControls();
                 updateChart();
             });
             document.getElementById('frame-filter').addEventListener('input', applyFrameFilter);

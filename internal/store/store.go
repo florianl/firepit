@@ -19,7 +19,10 @@ type ProfileEntry struct {
 	Profile            *profilespb.Profile
 	Dictionary         *profilespb.ProfilesDictionary
 	ResourceAttributes []*commonpb.KeyValue
-	Size               int64
+	// SampleAttributeKeys holds the sorted keys of attributes referenced by
+	// the samples of Profile.
+	SampleAttributeKeys []string
+	Size                int64
 }
 
 // stringTableLookup safely looks up a string in the string table by index.
@@ -36,11 +39,16 @@ func stringTableLookup(st []string, idx int32) string {
 // string table (key_strindex, string_value_strindex) take precedence over the
 // inline key and string_value.
 func ResolveKeyValue(st []string, kv *commonpb.KeyValue) (key, value string) {
-	key = kv.GetKey()
+	return ResolveKey(st, kv), ResolveStringValue(st, kv.GetValue())
+}
+
+// ResolveKey returns the key of kv. A reference into the string table
+// (key_strindex) takes precedence over the inline key.
+func ResolveKey(st []string, kv *commonpb.KeyValue) string {
 	if idx := kv.GetKeyStrindex(); idx != 0 {
-		key = stringTableLookup(st, idx)
+		return stringTableLookup(st, idx)
 	}
-	return key, ResolveStringValue(st, kv.GetValue())
+	return kv.GetKey()
 }
 
 // ResolveStringValue returns the string value of v, resolving
@@ -65,10 +73,39 @@ func collectResourceTypes(seen map[string]bool, st []string, attrs []*commonpb.K
 	}
 }
 
+// collectAttributeKeys adds the keys of all resource attributes in attrs to seen.
+func collectAttributeKeys(seen map[string]bool, st []string, attrs []*commonpb.KeyValue) {
+	for _, attr := range attrs {
+		if key := ResolveKey(st, attr); key != "" {
+			seen[key] = true
+		}
+	}
+}
+
+// sampleAttributeKeys returns the sorted keys of all attributes referenced by
+// the samples of profile.
+func sampleAttributeKeys(profile *profilespb.Profile, dict *profilespb.ProfilesDictionary) []string {
+	seenIdx := make(map[int32]bool)
+	seen := make(map[string]bool)
+	for _, sample := range profile.Samples {
+		for _, idx := range sample.GetAttributeIndices() {
+			if seenIdx[idx] || idx < 0 || int(idx) >= len(dict.AttributeTable) {
+				continue
+			}
+			seenIdx[idx] = true
+			if key := stringTableLookup(dict.StringTable, dict.AttributeTable[idx].GetKeyStrindex()); key != "" {
+				seen[key] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
 type Store struct {
 	mu              sync.RWMutex
 	entries         map[string][]ProfileEntry // sample type → profile entries
 	resourceTypes   []string
+	attributeKeys   []string
 	maxAge          time.Duration
 	cleanupInterval time.Duration
 	maxMemory       int64 // 0 = unlimited
@@ -102,6 +139,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 
 	st := dictionary.StringTable
 	seenResourceTypes := make(map[string]bool)
+	seenAttributeKeys := make(map[string]bool)
 
 	for _, rp := range resourceProfiles {
 		if rp == nil {
@@ -115,6 +153,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 
 			// Cache resource attributes for the filtering
 			collectResourceTypes(seenResourceTypes, st, resAttrs)
+			collectAttributeKeys(seenAttributeKeys, st, resAttrs)
 		}
 
 		for _, sp := range rp.ScopeProfiles {
@@ -143,11 +182,17 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 					key = typeStr + "(" + unitStr + ")"
 				}
 
+				sampleKeys := sampleAttributeKeys(profile, dictionary)
+				for _, k := range sampleKeys {
+					seenAttributeKeys[k] = true
+				}
+
 				entry := ProfileEntry{
-					CreatedAt:          time.Unix(0, int64(profile.TimeUnixNano)),
-					Profile:            profile,
-					Dictionary:         dictionary,
-					ResourceAttributes: resAttrs,
+					CreatedAt:           time.Unix(0, int64(profile.TimeUnixNano)),
+					Profile:             profile,
+					Dictionary:          dictionary,
+					ResourceAttributes:  resAttrs,
+					SampleAttributeKeys: sampleKeys,
 					// Include the size of the dictionary proportionally
 					Size: int64(proto.Size(profile) + proto.Size(dictionary)/len(sp.Profiles)),
 				}
@@ -161,6 +206,10 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	s.resourceTypes = append(s.resourceTypes, resAttrs...)
 	slices.Sort(s.resourceTypes)
 	s.resourceTypes = slices.Compact(s.resourceTypes)
+
+	s.attributeKeys = append(s.attributeKeys, slices.Collect(maps.Keys(seenAttributeKeys))...)
+	slices.Sort(s.attributeKeys)
+	s.attributeKeys = slices.Compact(s.attributeKeys)
 }
 
 func (s *Store) SampleTypes() []string {
@@ -184,6 +233,15 @@ func (s *Store) ResourceTypes() []string {
 	defer s.mu.RUnlock()
 
 	return s.resourceTypes
+}
+
+// AttributeKeys returns the sorted keys of all resource and sample attributes
+// of the stored profiles.
+func (s *Store) AttributeKeys() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.attributeKeys
 }
 
 func (s *Store) Stats() (count int, minTime, maxTime time.Time, ok bool) {
@@ -246,13 +304,20 @@ func (s *Store) cleanup() {
 
 	// Update ResourceAttributes for filtering
 	seenResourceTypes := make(map[string]bool)
+	seenAttributeKeys := make(map[string]bool)
 	for st := range s.entries {
 		for _, entry := range s.entries[st] {
-			collectResourceTypes(seenResourceTypes, entry.Dictionary.GetStringTable(), entry.ResourceAttributes)
+			strTable := entry.Dictionary.GetStringTable()
+			collectResourceTypes(seenResourceTypes, strTable, entry.ResourceAttributes)
+			collectAttributeKeys(seenAttributeKeys, strTable, entry.ResourceAttributes)
+			for _, k := range entry.SampleAttributeKeys {
+				seenAttributeKeys[k] = true
+			}
 		}
 	}
 	s.resourceTypes = slices.Sorted(maps.Keys(seenResourceTypes))
 	s.resourceTypes = slices.Compact(s.resourceTypes)
+	s.attributeKeys = slices.Sorted(maps.Keys(seenAttributeKeys))
 }
 
 func (s *Store) evictOldest() {
