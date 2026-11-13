@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unique"
 	"unsafe"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -26,6 +27,20 @@ type ProfileEntry struct {
 	// the samples of Profile.
 	SampleAttributeKeys []string
 	Size                int64
+	// interned keeps the strings of Dictionary interned while the entry is stored.
+	interned []unique.Handle[string]
+}
+
+// internStrings replaces the strings of table with interned copies and returns
+// their handles. Dictionaries of different requests largely repeat the same
+// strings, so this keeps a single copy of each.
+func internStrings(table []string) []unique.Handle[string] {
+	handles := make([]unique.Handle[string], len(table))
+	for i, s := range table {
+		handles[i] = unique.Make(s)
+		table[i] = handles[i].Value()
+	}
+	return handles
 }
 
 // stringTableLookup safely looks up a string in the string table by index.
@@ -191,11 +206,14 @@ func New(maxAge, cleanupInterval time.Duration, maxMemory int64) *Store {
 }
 
 // Add stores profiles with their associated dictionary. dictionary must not be nil;
-// if nil, the profiles are discarded and not stored.
+// if nil, the profiles are discarded and not stored. The store takes ownership
+// of the profiles and the dictionary, and interns the dictionary strings.
 func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary *profilespb.ProfilesDictionary) {
 	if dictionary == nil {
 		return
 	}
+
+	interned := internStrings(dictionary.StringTable)
 
 	// Prepare entries without holding the lock.
 	type newEntry struct {
@@ -270,6 +288,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 					Dictionary:          dictionary,
 					ResourceAttributes:  resAttrs,
 					SampleAttributeKeys: sampleKeys,
+					interned:            interned,
 				}
 				entry.Size = int64(unsafe.Sizeof(entry)) + stringsSize(sampleKeys) +
 					profileSize(profile) + dictShare + resShare
