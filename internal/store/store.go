@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -136,28 +135,29 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 		return
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Prepare entries without holding the lock.
+	type newEntry struct {
+		key   string
+		entry ProfileEntry
+	}
+	var newEntries []newEntry
 
 	st := dictionary.StringTable
 	seenResourceTypes := make(map[string]bool)
 	seenAttributeKeys := make(map[string]bool)
-	added := false
+	// Computed on first use.
+	dictSize := -1
 
 	for _, rp := range resourceProfiles {
 		if rp == nil {
 			continue
 		}
 
-		// Extract resource attributes
 		var resAttrs []*commonpb.KeyValue
 		if rp.Resource != nil {
 			resAttrs = rp.Resource.Attributes
-
-			// Cache resource attributes for the filtering
-			collectResourceTypes(seenResourceTypes, st, resAttrs)
-			collectAttributeKeys(seenAttributeKeys, st, resAttrs)
 		}
+		stored := false
 
 		for _, sp := range rp.ScopeProfiles {
 			if sp == nil {
@@ -190,39 +190,66 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 					seenAttributeKeys[k] = true
 				}
 
-				entry := ProfileEntry{
+				if dictSize < 0 {
+					dictSize = proto.Size(dictionary)
+				}
+
+				newEntries = append(newEntries, newEntry{key, ProfileEntry{
 					CreatedAt:           time.Unix(0, int64(profile.TimeUnixNano)),
 					Profile:             profile,
 					Dictionary:          dictionary,
 					ResourceAttributes:  resAttrs,
 					SampleAttributeKeys: sampleKeys,
 					// Include the size of the dictionary proportionally
-					Size: int64(proto.Size(profile) + proto.Size(dictionary)/len(sp.Profiles)),
-				}
-				s.entries[key] = append(s.entries[key], entry)
-				s.totalBytes += entry.Size
-				added = true
+					Size: int64(proto.Size(profile) + dictSize/len(sp.Profiles)),
+				}})
+				stored = true
 			}
+		}
+
+		if stored {
+			// Cache resource attributes for the filtering
+			collectResourceTypes(seenResourceTypes, st, resAttrs)
+			collectAttributeKeys(seenAttributeKeys, st, resAttrs)
 		}
 	}
 
-	resAttrs := slices.Sorted(maps.Keys(seenResourceTypes))
-	s.resourceTypes = append(s.resourceTypes, resAttrs...)
-	slices.Sort(s.resourceTypes)
-	s.resourceTypes = slices.Compact(s.resourceTypes)
-
-	s.attributeKeys = append(s.attributeKeys, slices.Collect(maps.Keys(seenAttributeKeys))...)
-	slices.Sort(s.attributeKeys)
-	s.attributeKeys = slices.Compact(s.attributeKeys)
-
-	if added {
-		s.generation.Add(1)
+	if len(newEntries) == 0 {
+		return
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, e := range newEntries {
+		s.entries[e.key] = append(s.entries[e.key], e.entry)
+		s.totalBytes += e.entry.Size
+	}
+	s.resourceTypes = mergeSorted(s.resourceTypes, seenResourceTypes)
+	s.attributeKeys = mergeSorted(s.attributeKeys, seenAttributeKeys)
+	s.generation.Add(1)
 }
 
 // Generation returns a counter that changes whenever profiles are added or removed.
 func (s *Store) Generation() uint64 {
 	return s.generation.Load()
+}
+
+// mergeSorted returns the sorted union of sorted and seen without modifying sorted.
+func mergeSorted(sorted []string, seen map[string]bool) []string {
+	var missing []string
+	for k := range seen {
+		if _, found := slices.BinarySearch(sorted, k); !found {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) == 0 {
+		return sorted
+	}
+	merged := make([]string, 0, len(sorted)+len(missing))
+	merged = append(append(merged, sorted...), missing...)
+	slices.Sort(merged)
+	return merged
 }
 
 func (s *Store) SampleTypes() []string {
@@ -292,19 +319,26 @@ func (s *Store) cleanupLoop() {
 func (s *Store) cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	removed := 0
 	if s.maxAge > 0 {
 		now := time.Now()
 		for typeStr, entries := range s.entries {
-			var kept []ProfileEntry
+			// Readers get copies, so filter in place.
+			kept := entries[:0]
 			for _, entry := range entries {
 				if now.Sub(entry.CreatedAt) < s.maxAge {
 					kept = append(kept, entry)
 				} else {
 					s.totalBytes -= entry.Size
-					removed++
 				}
 			}
+			if len(kept) == len(entries) {
+				continue
+			}
+			removed += len(entries) - len(kept)
+			// Release removed profiles.
+			clear(entries[len(kept):])
 			if len(kept) > 0 {
 				s.entries[typeStr] = kept
 			} else {
@@ -316,9 +350,12 @@ func (s *Store) cleanup() {
 	if s.maxMemory > 0 && s.totalBytes > s.maxMemory {
 		removed += s.evictOldest()
 	}
-	if removed > 0 {
-		s.generation.Add(1)
+
+	if removed == 0 {
+		// Add keeps the filter attributes up to date.
+		return
 	}
+	s.generation.Add(1)
 
 	// Update ResourceAttributes for filtering
 	seenResourceTypes := make(map[string]bool)
@@ -334,44 +371,56 @@ func (s *Store) cleanup() {
 		}
 	}
 	s.resourceTypes = slices.Sorted(maps.Keys(seenResourceTypes))
-	s.resourceTypes = slices.Compact(s.resourceTypes)
 	s.attributeKeys = slices.Sorted(maps.Keys(seenAttributeKeys))
 }
 
-// evictOldest drops the oldest profiles to meet the memory limit and returns their count.
+// evictOldest removes the oldest profiles to meet the memory limit and returns their count.
 func (s *Store) evictOldest() int {
-	type indexed struct {
-		typeStr string
-		entry   ProfileEntry
+	type ref struct {
+		typeStr   string
+		idx       int
+		createdAt time.Time
+		size      int64
 	}
-	var all []indexed
+	var all []ref
 	for typeStr, entries := range s.entries {
-		for _, e := range entries {
-			all = append(all, indexed{typeStr, e})
+		for i, e := range entries {
+			all = append(all, ref{typeStr, i, e.CreatedAt, e.Size})
 		}
 	}
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].entry.CreatedAt.Before(all[j].entry.CreatedAt)
+	slices.SortFunc(all, func(a, b ref) int {
+		return a.createdAt.Compare(b.createdAt)
 	})
 
+	// Mark first, then compact each sample type in one pass.
+	evict := make(map[string][]bool)
 	dropped := 0
 	for _, item := range all {
 		if s.totalBytes <= s.maxMemory {
 			break
 		}
-		entries := s.entries[item.typeStr]
-		for i, e := range entries {
-			if e.CreatedAt.Equal(item.entry.CreatedAt) && e.Size == item.entry.Size {
-				s.entries[item.typeStr] = append(entries[:i], entries[i+1:]...)
-				break
-			}
+		marks := evict[item.typeStr]
+		if marks == nil {
+			marks = make([]bool, len(s.entries[item.typeStr]))
+			evict[item.typeStr] = marks
 		}
-		s.totalBytes -= item.entry.Size
+		marks[item.idx] = true
+		s.totalBytes -= item.size
 		dropped++
 	}
 
-	for typeStr, entries := range s.entries {
-		if len(entries) == 0 {
+	for typeStr, marks := range evict {
+		entries := s.entries[typeStr]
+		kept := entries[:0]
+		for i, e := range entries {
+			if !marks[i] {
+				kept = append(kept, e)
+			}
+		}
+		clear(entries[len(kept):])
+		if len(kept) > 0 {
+			s.entries[typeStr] = kept
+		} else {
 			delete(s.entries, typeStr)
 		}
 	}

@@ -570,3 +570,53 @@ func TestGeneration(t *testing.T) {
 		t.Fatal("generation did not change after removing an expired profile")
 	}
 }
+
+// Readers use the returned slices without the lock, so Add must not modify them.
+func TestAddDoesNotModifyReturnedSlices(t *testing.T) {
+	s := New(time.Minute, time.Hour, 0)
+	defer s.Close()
+
+	add := func(service string) {
+		s.Add([]*profilespb.ResourceProfiles{{
+			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+				{Key: service, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: service}}},
+			}},
+			ScopeProfiles: []*profilespb.ScopeProfiles{{
+				Profiles: []*profilespb.Profile{{TimeUnixNano: uint64(time.Now().UnixNano())}},
+			}},
+		}}, &profilespb.ProfilesDictionary{StringTable: []string{""}})
+	}
+
+	add("m")
+	add("z")
+	types, keys := s.ResourceTypes(), s.AttributeKeys()
+	wantTypes, wantKeys := slices.Clone(types), slices.Clone(keys)
+
+	// "a" sorts before the existing values.
+	add("a")
+	if !slices.Equal(types, wantTypes) || !slices.Equal(keys, wantKeys) {
+		t.Errorf("returned slices were modified: %v, %v; want %v, %v", types, keys, wantTypes, wantKeys)
+	}
+	if got, want := s.ResourceTypes(), []string{"a:a", "m:m", "z:z"}; !slices.Equal(got, want) {
+		t.Errorf("ResourceTypes() = %v, want %v", got, want)
+	}
+	if got, want := s.AttributeKeys(), []string{"a", "m", "z"}; !slices.Equal(got, want) {
+		t.Errorf("AttributeKeys() = %v, want %v", got, want)
+	}
+}
+
+// Resources without profiles are not offered as filter.
+func TestAddResourceWithoutProfiles(t *testing.T) {
+	s := New(time.Minute, time.Hour, 0)
+	defer s.Close()
+
+	s.Add([]*profilespb.ResourceProfiles{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+			{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "idle"}}},
+		}},
+	}}, &profilespb.ProfilesDictionary{StringTable: []string{""}})
+
+	if got := s.ResourceTypes(); len(got) != 0 {
+		t.Errorf("ResourceTypes() = %v, want none", got)
+	}
+}

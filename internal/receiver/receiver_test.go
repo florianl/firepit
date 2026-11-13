@@ -313,3 +313,30 @@ func TestHTTPHandlerContentEncoding(t *testing.T) {
 		})
 	}
 }
+
+// BenchmarkReadBody measures reading a 4 MiB request body.
+func BenchmarkReadBody(b *testing.B) {
+	payload := make([]byte, 4<<20)
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	for b.Loop() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/profiles", bytes.NewReader(payload))
+		body, err := readBody(req, 32<<20)
+		if err != nil || len(body) != len(payload) {
+			b.Fatalf("read %d bytes: %v", len(body), err)
+		}
+	}
+}
+
+func TestReadBody(t *testing.T) {
+	payload := []byte(`{"resourceProfiles":[]}`)
+	for _, contentLength := range []int64{int64(len(payload)), -1, 5, 1 << 40} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/profiles", bytes.NewReader(payload))
+		// Content-Length is only a hint.
+		req.ContentLength = contentLength
+		body, err := readBody(req, 1<<20)
+		if err != nil || !bytes.Equal(body, payload) {
+			t.Errorf("Content-Length %d: body = %q, err = %v", contentLength, body, err)
+		}
+	}
+}

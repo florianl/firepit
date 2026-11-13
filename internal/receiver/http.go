@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -39,7 +40,7 @@ var errBodyTooLarge = errors.New("request body too large")
 // The decompressed size is limited to maxBodySize as well.
 func readBody(r *http.Request, maxBodySize int64) ([]byte, error) {
 	if r.Header.Get("Content-Encoding") != "gzip" {
-		return io.ReadAll(r.Body)
+		return readAll(r.Body, r.ContentLength, maxBodySize)
 	}
 
 	zr := gzipReaderPool.Get().(*gzip.Reader)
@@ -57,6 +58,18 @@ func readBody(r *http.Request, maxBodySize int64) ([]byte, error) {
 		return nil, errBodyTooLarge
 	}
 	return body, nil
+}
+
+// readAll reads rd to EOF and preallocates the buffer if length is known.
+func readAll(rd io.Reader, length, maxBodySize int64) ([]byte, error) {
+	if length <= 0 || length > maxBodySize {
+		return io.ReadAll(rd)
+	}
+	var buf bytes.Buffer
+	// MinRead extra avoids a regrow when ReadFrom hits EOF.
+	buf.Grow(int(length) + bytes.MinRead)
+	_, err := buf.ReadFrom(rd)
+	return buf.Bytes(), err
 }
 
 func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
