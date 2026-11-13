@@ -172,31 +172,27 @@ func frameTypeFromLocation(dict *profilespb.ProfilesDictionary, loc *profilespb.
 	return ""
 }
 
+// FilterByResourceType returns the entries matching the single filter resourceType.
 func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []store.ProfileEntry {
 	if resourceType == "" {
 		return entries
 	}
+	return FilterByResource(entries, []string{resourceType})
+}
 
-	parts := strings.SplitN(resourceType, ":", 2)
-	if len(parts) != 2 {
+// FilterByResource returns the entries whose resource matches all "key:value" filters.
+func FilterByResource(entries []store.ProfileEntry, filters []string) []store.ProfileEntry {
+	filters = slices.DeleteFunc(slices.Clone(filters), func(f string) bool {
+		return !strings.Contains(f, ":")
+	})
+	if len(filters) == 0 {
 		return entries
 	}
-	key, value := parts[0], parts[1]
 
 	var filtered []store.ProfileEntry
 	for _, entry := range entries {
-		if entry.ResourceAttributes == nil {
-			continue
-		}
-		st := entry.Dictionary.GetStringTable()
-		for _, attr := range entry.ResourceAttributes {
-			if attr.Value == nil {
-				continue
-			}
-			if k, v := store.ResolveKeyValue(st, attr); k == key && v == value {
-				filtered = append(filtered, entry)
-				break
-			}
+		if store.MatchResourceFilters(entry.Dictionary.GetStringTable(), entry.ResourceAttributes, filters) {
+			filtered = append(filtered, entry)
 		}
 	}
 	return filtered
@@ -217,17 +213,7 @@ func ParseKeyList(s string) []string {
 
 // attrValueString returns a string representation of scalar attribute values.
 func attrValueString(st []string, v *commonpb.AnyValue) string {
-	switch val := v.GetValue().(type) {
-	case *commonpb.AnyValue_StringValue, *commonpb.AnyValue_StringValueStrindex:
-		return store.ResolveStringValue(st, v)
-	case *commonpb.AnyValue_IntValue:
-		return strconv.FormatInt(val.IntValue, 10)
-	case *commonpb.AnyValue_BoolValue:
-		return strconv.FormatBool(val.BoolValue)
-	case *commonpb.AnyValue_DoubleValue:
-		return strconv.FormatFloat(val.DoubleValue, 'g', -1, 64)
-	}
-	return ""
+	return store.ResolveValue(st, v)
 }
 
 // virtualFrameName formats the name of a virtual frame.

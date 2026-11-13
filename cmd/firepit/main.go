@@ -383,6 +383,7 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 	mux.HandleFunc(base+"/api/sandwich-detail", compressResponse(cache.wrap(handleSandwichDetail(st, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/profiles", compressResponse(cache.wrap(handleProfiles(st))))
 	mux.HandleFunc(base+"/api/resource-types", compressResponse(cache.wrap(handleResourceTypes(st))))
+	mux.HandleFunc(base+"/api/resource-attributes", compressResponse(cache.wrap(handleResourceAttributes(st))))
 	mux.HandleFunc(base+"/api/attribute-keys", compressResponse(cache.wrap(handleAttributeKeys(st))))
 	mux.HandleFunc(base+"/api/config", compressResponse(handleConfig(cfg)))
 
@@ -464,14 +465,14 @@ func handleFlamegraph(st *store.Store, defaultVirtualFrames []string) http.Handl
 			return
 		}
 
-		resourceType := r.URL.Query().Get("resourceType")
+		filters := r.URL.Query()["resourceType"]
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		types := st.SampleTypes()
 		graphs := make([]profiler.NamedFlamegraph, 0, len(types))
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
-			entries = profiler.FilterByResourceType(entries, resourceType)
+			entries = profiler.FilterByResource(entries, filters)
 			root := profiler.ToFlamegraph(entries, opts)
 			graphs = append(graphs, profiler.NamedFlamegraph{Type: t, Root: root})
 		}
@@ -490,13 +491,13 @@ func handleFlamescope(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		resourceType := r.URL.Query().Get("resourceType")
+		filters := r.URL.Query()["resourceType"]
 
 		types := st.SampleTypes()
 		maps := make([]profiler.NamedFlamescope, 0, len(types))
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
-			entries = profiler.FilterByResourceType(entries, resourceType)
+			entries = profiler.FilterByResource(entries, filters)
 			hm := profiler.ToHeatMap(entries)
 			maps = append(maps, profiler.NamedFlamescope{Type: t, Data: hm})
 		}
@@ -543,6 +544,37 @@ func handleResourceTypes(st *store.Store) http.HandlerFunc {
 		types := st.ResourceTypes()
 
 		json.NewEncoder(w).Encode(types)
+	}
+}
+
+// resourceAttributeValues holds the values seen for a resource attribute key.
+type resourceAttributeValues struct {
+	Key    string   `json:"key"`
+	Values []string `json:"values"`
+}
+
+// handleResourceAttributes lists the filterable resource attributes grouped by key.
+func handleResourceAttributes(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+			return
+		}
+
+		// Attributes are sorted by key
+		grouped := []resourceAttributeValues{}
+		for _, attr := range st.ResourceAttributes() {
+			if n := len(grouped); n == 0 || grouped[n-1].Key != attr.Key {
+				grouped = append(grouped, resourceAttributeValues{Key: attr.Key})
+			}
+			last := &grouped[len(grouped)-1]
+			last.Values = append(last.Values, attr.Value)
+		}
+
+		json.NewEncoder(w).Encode(grouped)
 	}
 }
 
@@ -594,14 +626,14 @@ func handleSandwich(st *store.Store, defaultVirtualFrames []string) http.Handler
 			return
 		}
 
-		resourceType := r.URL.Query().Get("resourceType")
+		filters := r.URL.Query()["resourceType"]
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		types := st.SampleTypes()
 		sandwiches := make([]profiler.NamedSandwich, 0, len(types))
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
-			entries = profiler.FilterByResourceType(entries, resourceType)
+			entries = profiler.FilterByResource(entries, filters)
 			root := profiler.ToFlamegraph(entries, opts)
 			data := profiler.ToSandwich(root)
 			sandwiches = append(sandwiches, profiler.NamedSandwich{Type: t, Data: data})
@@ -625,7 +657,7 @@ func handleSandwichDetail(st *store.Store, defaultVirtualFrames []string) http.H
 			return
 		}
 
-		resourceType := r.URL.Query().Get("resourceType")
+		filters := r.URL.Query()["resourceType"]
 		functionName := r.URL.Query().Get("functionName")
 		sampleType := r.URL.Query().Get("sampleType")
 		opts := flamegraphOptions(r, defaultVirtualFrames)
@@ -645,7 +677,7 @@ func handleSandwichDetail(st *store.Store, defaultVirtualFrames []string) http.H
 		foundInAnyType := false
 		for _, t := range types {
 			entries := st.ProfileEntries(t)
-			entries = profiler.FilterByResourceType(entries, resourceType)
+			entries = profiler.FilterByResource(entries, filters)
 			root := profiler.ToFlamegraph(entries, opts)
 			sandwich := profiler.ExtractSandwichGraphs(root, functionName)
 			result[t] = sandwich

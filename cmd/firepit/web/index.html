@@ -471,8 +471,9 @@
                 </div>
                 <div class="resource-filter">
                     <label for="resource-key-select">Filter:</label>
+                    <div id="resource-filter-chips" class="vframe-chips"></div>
                     <select id="resource-key-select">
-                        <option value="">All</option>
+                        <option value="">+ attribute</option>
                     </select>
                     <select id="resource-value-select" disabled>
                         <option value="">(select attribute)</option>
@@ -511,10 +512,9 @@
         let updateInterval = null;
         let isPaused = false;
         let activeTab = null;
-        let selectedResourceType = '';
+        let resourceFilters = []; // {key, value}, all must match
         let selectedAttrKey = '';
-        let selectedAttrValue = '';
-        let resourceTypeMap = {};
+        let resourceAttributeMap = new Map(); // key -> values
         let lastResourceTypesKey = '';
         let frameFilter = '';
         let currentGraphs = null;
@@ -548,46 +548,77 @@
             }
         }
 
-        function applyResourceFilter() {
-            selectedResourceType = (selectedAttrKey && selectedAttrValue)
-                ? selectedAttrKey + ':' + selectedAttrValue
-                : '';
+        function resourceFilterParams() {
+            return resourceFilters.map(f => f.key + ':' + f.value);
+        }
+
+        // Rebuilds the filter chips and the selects. Filtered keys are not
+        // offered again, as a resource has one value per key.
+        function rebuildResourceFilterControls() {
+            const chips = document.getElementById('resource-filter-chips');
+            chips.replaceChildren();
+            resourceFilters.forEach((f, i) => {
+                const chip = document.createElement('span');
+                chip.className = 'vframe-chip';
+                chip.textContent = f.key + ' = ' + f.value;
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.title = 'Remove filter ' + f.key;
+                remove.textContent = '×';
+                remove.addEventListener('click', () => {
+                    resourceFilters = resourceFilters.filter((_, j) => j !== i);
+                    rebuildResourceFilterControls();
+                    updateChart(true);
+                });
+                chip.appendChild(remove);
+                chips.appendChild(chip);
+            });
+
+            const used = new Set(resourceFilters.map(f => f.key));
+            const keys = [...resourceAttributeMap.keys()].filter(k => !used.has(k));
+            if (!keys.includes(selectedAttrKey)) selectedAttrKey = '';
+
+            const keySelect = document.getElementById('resource-key-select');
+            keySelect.replaceChildren();
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = resourceFilters.length ? '+ and' : 'All';
+            keySelect.appendChild(placeholder);
+            keys.forEach(k => {
+                const o = document.createElement('option');
+                o.value = k;
+                o.textContent = k;
+                keySelect.appendChild(o);
+            });
+            keySelect.value = selectedAttrKey;
+            keySelect.disabled = keys.length === 0;
+
+            rebuildValueSelect();
         }
 
         function rebuildValueSelect() {
             const valueSelect = document.getElementById('resource-value-select');
-            valueSelect.innerHTML = '';
+            valueSelect.replaceChildren();
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            valueSelect.appendChild(placeholder);
 
             if (!selectedAttrKey) {
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = '(select attribute)';
-                valueSelect.appendChild(opt);
+                placeholder.textContent = '(select attribute)';
                 valueSelect.disabled = true;
-                selectedAttrValue = '';
                 return;
             }
 
+            placeholder.textContent = '(select value)';
             valueSelect.disabled = false;
-            const allOpt = document.createElement('option');
-            allOpt.value = '';
-            allOpt.textContent = 'All values';
-            valueSelect.appendChild(allOpt);
-
-            const values = resourceTypeMap[selectedAttrKey] || [];
-            values.forEach(v => {
+            (resourceAttributeMap.get(selectedAttrKey) || []).forEach(v => {
                 const o = document.createElement('option');
                 o.value = v;
                 o.textContent = v;
                 valueSelect.appendChild(o);
             });
-
-            if (selectedAttrValue && values.includes(selectedAttrValue)) {
-                valueSelect.value = selectedAttrValue;
-            } else {
-                selectedAttrValue = '';
-                valueSelect.value = '';
-            }
+            valueSelect.value = '';
         }
 
         function rebuildVirtualFrameControls() {
@@ -631,7 +662,7 @@
         // Appends the shared query parameters for flame graph based endpoints.
         // Virtual frames are only selectable in, and applied to, the flame graph view.
         function appendCommonParams(params) {
-            if (selectedResourceType) params.set('resourceType', selectedResourceType);
+            resourceFilterParams().forEach(f => params.append('resourceType', f));
             params.set('virtualFrames', viewMode === 'flamegraph' ? virtualFrames.join(',') : '');
             return params;
         }
@@ -827,7 +858,7 @@ function applyFrameFilter() {
                 unit: activeGraph.unit || null,
                 data: activeGraph.root,
                 exportedAt: new Date().toISOString(),
-                resourceType: selectedResourceType || 'all',
+                resourceType: resourceFilterParams().join(', ') || 'all',
                 virtualFrames: virtualFrames
             };
 
@@ -911,50 +942,23 @@ function applyFrameFilter() {
                 })
                 .catch(() => {});
 
-            // Resource types: cascading key → value selects
-            fetch(window.__BASE_PATH__ + '/api/resource-types')
+            // Resource attributes for filtering
+            fetch(window.__BASE_PATH__ + '/api/resource-attributes')
                 .then(r => r.json())
-                .then(types => {
-                    if (!types) return;
-                    const newTypes = types || [];
-                    const newKey = JSON.stringify(newTypes);
+                .then(attrs => {
+                    const newAttrs = attrs || [];
+                    const newKey = JSON.stringify(newAttrs);
                     if (newKey === lastResourceTypesKey) return;
                     lastResourceTypesKey = newKey;
 
-                    // Group "key:value" strings into { key: [values] }
-                    const newMap = {};
-                    newTypes.forEach(t => {
-                        const idx = t.indexOf(':');
-                        if (idx === -1) return;
-                        const k = t.slice(0, idx);
-                        const v = t.slice(idx + 1);
-                        if (!newMap[k]) newMap[k] = [];
-                        newMap[k].push(v);
-                    });
-                    resourceTypeMap = newMap;
+                    resourceAttributeMap = new Map(newAttrs.map(a => [a.key, a.values || []]));
 
-                    const keySelect = document.getElementById('resource-key-select');
-                    keySelect.innerHTML = '';
-                    const allOpt = document.createElement('option');
-                    allOpt.value = '';
-                    allOpt.textContent = 'All';
-                    keySelect.appendChild(allOpt);
-                    Object.keys(newMap).sort().forEach(k => {
-                        const o = document.createElement('option');
-                        o.value = k;
-                        o.textContent = k;
-                        keySelect.appendChild(o);
-                    });
-
-                    if (selectedAttrKey && newMap[selectedAttrKey]) {
-                        keySelect.value = selectedAttrKey;
-                    } else {
-                        selectedAttrKey = '';
-                        selectedAttrValue = '';
-                        keySelect.value = '';
-                    }
-                    rebuildValueSelect();
-                    applyResourceFilter();
+                    // Drop stale filters as they would hide all profiles
+                    const before = resourceFilters.length;
+                    resourceFilters = resourceFilters.filter(f =>
+                        (resourceAttributeMap.get(f.key) || []).includes(f.value));
+                    rebuildResourceFilterControls();
+                    if (resourceFilters.length !== before) updateChart(true);
                 })
                 .catch(() => {});
         }
@@ -1339,9 +1343,9 @@ function applyFrameFilter() {
             container.innerHTML = '<div class="waiting">Please select a function.</div>';
         }
 
-        function fetchSandwichDetail(functionName, sampleType, resourceType, rightPanel) {
+        function fetchSandwichDetail(functionName, sampleType, resourceTypes, rightPanel) {
             const params = new URLSearchParams({ functionName: functionName, sampleType: sampleType });
-            if (resourceType) params.set('resourceType', resourceType);
+            resourceTypes.forEach(f => params.append('resourceType', f));
             params.set('virtualFrames', '');
             const query = toQuery(params);
 
@@ -1426,7 +1430,7 @@ function applyFrameFilter() {
                     renderSandwichTable(container, data);
 
                     const rightPanel = document.getElementById('sandwich-right-' + container.parentElement.id);
-                    fetchSandwichDetail(fn.name, activeTab, selectedResourceType, rightPanel);
+                    fetchSandwichDetail(fn.name, activeTab, resourceFilterParams(), rightPanel);
                 });
 
                 const nameCell = document.createElement('td');
@@ -1944,14 +1948,13 @@ function applyFrameFilter() {
             });
             document.getElementById('resource-key-select').addEventListener('change', (e) => {
                 selectedAttrKey = e.target.value;
-                selectedAttrValue = '';
                 rebuildValueSelect();
-                applyResourceFilter();
-                updateChart(true);
             });
             document.getElementById('resource-value-select').addEventListener('change', (e) => {
-                selectedAttrValue = e.target.value;
-                applyResourceFilter();
+                if (!selectedAttrKey || !e.target.value) return;
+                resourceFilters = [...resourceFilters, { key: selectedAttrKey, value: e.target.value }];
+                selectedAttrKey = '';
+                rebuildResourceFilterControls();
                 updateChart(true);
             });
             document.getElementById('vframe-add-select').addEventListener('change', (e) => {

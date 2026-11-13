@@ -2,9 +2,12 @@
 package store
 
 import (
+	"cmp"
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -60,17 +63,76 @@ func ResolveStringValue(st []string, v *commonpb.AnyValue) string {
 	return v.GetStringValue()
 }
 
-// collectResourceTypes adds the "key:value" representation of all string
-// attributes in attrs to seen.
-func collectResourceTypes(seen map[string]bool, st []string, attrs []*commonpb.KeyValue) {
+// ResolveValue returns the scalar value v as string, or "" if v is not a scalar.
+func ResolveValue(st []string, v *commonpb.AnyValue) string {
+	switch val := v.GetValue().(type) {
+	case *commonpb.AnyValue_StringValue, *commonpb.AnyValue_StringValueStrindex:
+		return ResolveStringValue(st, v)
+	case *commonpb.AnyValue_IntValue:
+		return strconv.FormatInt(val.IntValue, 10)
+	case *commonpb.AnyValue_BoolValue:
+		return strconv.FormatBool(val.BoolValue)
+	case *commonpb.AnyValue_DoubleValue:
+		return strconv.FormatFloat(val.DoubleValue, 'g', -1, 64)
+	}
+	return ""
+}
+
+// ResourceAttribute is a scalar resource attribute usable as filter.
+type ResourceAttribute struct {
+	Key   string
+	Value string
+}
+
+// String returns the filter form "key:value".
+func (a ResourceAttribute) String() string {
+	return a.Key + ":" + a.Value
+}
+
+func compareResourceAttributes(a, b ResourceAttribute) int {
+	return cmp.Or(cmp.Compare(a.Key, b.Key), cmp.Compare(a.Value, b.Value))
+}
+
+// collectResourceAttributes adds the scalar attributes in attrs to seen.
+func collectResourceAttributes(seen map[ResourceAttribute]bool, st []string, attrs []*commonpb.KeyValue) {
 	for _, attr := range attrs {
-		if attr.Value == nil {
+		if attr.GetValue() == nil {
 			continue
 		}
-		if key, strVal := ResolveKeyValue(st, attr); key != "" && strVal != "" {
-			seen[key+":"+strVal] = true
+		if key, value := ResolveKey(st, attr), ResolveValue(st, attr.Value); key != "" && value != "" {
+			seen[ResourceAttribute{Key: key, Value: value}] = true
 		}
 	}
+}
+
+// MatchResourceFilters reports whether attrs match all "key:value" filters.
+// Filters without a colon are ignored.
+func MatchResourceFilters(st []string, attrs []*commonpb.KeyValue, filters []string) bool {
+	for _, filter := range filters {
+		if !strings.Contains(filter, ":") {
+			continue
+		}
+		matched := false
+		for _, attr := range attrs {
+			if attr.GetValue() == nil {
+				continue
+			}
+			key := ResolveKey(st, attr)
+			// Keys and values may contain colons, so match by prefix
+			// instead of splitting the filter.
+			if rest, ok := strings.CutPrefix(filter, key); !ok || !strings.HasPrefix(rest, ":") {
+				continue
+			}
+			if value := ResolveValue(st, attr.Value); value != "" && filter[len(key)+1:] == value {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 // collectAttributeKeys adds the keys of all resource attributes in attrs to seen.
@@ -104,7 +166,7 @@ func sampleAttributeKeys(profile *profilespb.Profile, dict *profilespb.ProfilesD
 type Store struct {
 	mu              sync.RWMutex
 	entries         map[string][]ProfileEntry // sample type → profile entries
-	resourceTypes   []string
+	resourceAttrs   []ResourceAttribute
 	attributeKeys   []string
 	maxAge          time.Duration
 	cleanupInterval time.Duration
@@ -143,7 +205,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	var newEntries []newEntry
 
 	st := dictionary.StringTable
-	seenResourceTypes := make(map[string]bool)
+	seenResourceAttrs := make(map[ResourceAttribute]bool)
 	seenAttributeKeys := make(map[string]bool)
 
 	// Shared data is accounted in equal shares to the profiles using it.
@@ -218,7 +280,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 
 		if stored {
 			// Cache resource attributes for the filtering
-			collectResourceTypes(seenResourceTypes, st, resAttrs)
+			collectResourceAttributes(seenResourceAttrs, st, resAttrs)
 			collectAttributeKeys(seenAttributeKeys, st, resAttrs)
 		}
 	}
@@ -234,8 +296,8 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 		s.entries[e.key] = append(s.entries[e.key], e.entry)
 		s.totalBytes += e.entry.Size
 	}
-	s.resourceTypes = mergeSorted(s.resourceTypes, seenResourceTypes)
-	s.attributeKeys = mergeSorted(s.attributeKeys, seenAttributeKeys)
+	s.resourceAttrs = mergeSorted(s.resourceAttrs, seenResourceAttrs, compareResourceAttributes)
+	s.attributeKeys = mergeSorted(s.attributeKeys, seenAttributeKeys, strings.Compare)
 	s.generation.Add(1)
 }
 
@@ -245,19 +307,19 @@ func (s *Store) Generation() uint64 {
 }
 
 // mergeSorted returns the sorted union of sorted and seen without modifying sorted.
-func mergeSorted(sorted []string, seen map[string]bool) []string {
-	var missing []string
+func mergeSorted[T comparable](sorted []T, seen map[T]bool, compare func(a, b T) int) []T {
+	var missing []T
 	for k := range seen {
-		if _, found := slices.BinarySearch(sorted, k); !found {
+		if _, found := slices.BinarySearchFunc(sorted, k, compare); !found {
 			missing = append(missing, k)
 		}
 	}
 	if len(missing) == 0 {
 		return sorted
 	}
-	merged := make([]string, 0, len(sorted)+len(missing))
+	merged := make([]T, 0, len(sorted)+len(missing))
 	merged = append(append(merged, sorted...), missing...)
-	slices.Sort(merged)
+	slices.SortFunc(merged, compare)
 	return merged
 }
 
@@ -290,11 +352,28 @@ func (s *Store) ProfileEntries(sampleType string) []ProfileEntry {
 	return result
 }
 
+// ResourceTypes returns the resource attributes in filter form "key:value".
 func (s *Store) ResourceTypes() []string {
+	attrs := s.ResourceAttributes()
+	if len(attrs) == 0 {
+		return nil
+	}
+	types := make([]string, len(attrs))
+	for i, attr := range attrs {
+		types[i] = attr.String()
+	}
+	// Distinct attributes may collide, e.g. a:b:c
+	slices.Sort(types)
+	return slices.Compact(types)
+}
+
+// ResourceAttributes returns the sorted resource attributes usable as filter.
+// The returned slice must not be modified.
+func (s *Store) ResourceAttributes() []ResourceAttribute {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.resourceTypes
+	return s.resourceAttrs
 }
 
 // AttributeKeys returns the sorted keys of all resource and sample attributes
@@ -380,19 +459,19 @@ func (s *Store) cleanup() {
 	s.generation.Add(1)
 
 	// Update ResourceAttributes for filtering
-	seenResourceTypes := make(map[string]bool)
+	seenResourceAttrs := make(map[ResourceAttribute]bool)
 	seenAttributeKeys := make(map[string]bool)
 	for st := range s.entries {
 		for _, entry := range s.entries[st] {
 			strTable := entry.Dictionary.GetStringTable()
-			collectResourceTypes(seenResourceTypes, strTable, entry.ResourceAttributes)
+			collectResourceAttributes(seenResourceAttrs, strTable, entry.ResourceAttributes)
 			collectAttributeKeys(seenAttributeKeys, strTable, entry.ResourceAttributes)
 			for _, k := range entry.SampleAttributeKeys {
 				seenAttributeKeys[k] = true
 			}
 		}
 	}
-	s.resourceTypes = slices.Sorted(maps.Keys(seenResourceTypes))
+	s.resourceAttrs = slices.SortedFunc(maps.Keys(seenResourceAttrs), compareResourceAttributes)
 	s.attributeKeys = slices.Sorted(maps.Keys(seenAttributeKeys))
 }
 
