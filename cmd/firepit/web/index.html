@@ -511,6 +511,47 @@
     <script>
         let updateInterval = null;
         let isPaused = false;
+
+        // Refresh on server events. Poll while the stream is not connected.
+        const POLL_INTERVAL_MS = 5000;
+        let eventSource = null;
+
+        function startPolling() {
+            if (updateInterval === null) {
+                updateInterval = setInterval(updateChart, POLL_INTERVAL_MS);
+            }
+        }
+
+        function stopPolling() {
+            clearInterval(updateInterval);
+            updateInterval = null;
+        }
+
+        function startUpdates() {
+            stopUpdates();
+            if (typeof EventSource === 'undefined') {
+                startPolling();
+                return;
+            }
+            startPolling();
+            eventSource = new EventSource(window.__BASE_PATH__ + '/api/events');
+            // Also sent after a reconnect, so catch up.
+            eventSource.addEventListener('ready', () => {
+                stopPolling();
+                updateChart();
+            });
+            eventSource.addEventListener('change', () => updateChart());
+            // The browser reconnects on its own.
+            eventSource.onerror = () => startPolling();
+        }
+
+        function stopUpdates() {
+            stopPolling();
+            if (eventSource !== null) {
+                eventSource.close();
+                eventSource = null;
+            }
+        }
         let activeTab = null;
         let resourceFilters = []; // {key, value}, all must match
         let selectedAttrKey = '';
@@ -703,7 +744,7 @@
 
             isPaused = !isPaused;
             if (isPaused) {
-                clearInterval(updateInterval);
+                stopUpdates();
                 btn.textContent = 'Resume';
                 if (viewMode === 'flamegraph') {
                     filterContainer.classList.add('visible');
@@ -714,7 +755,7 @@
                 frameFilter = '';
                 filterInput.value = '';
                 updateChart(true);
-                updateInterval = setInterval(updateChart, 10000);
+                startUpdates();
                 btn.textContent = 'Pause';
             }
         }
@@ -1940,7 +1981,7 @@ function applyFrameFilter() {
                 .catch(() => {})
                 .finally(() => {
                     updateChart(true);
-                    updateInterval = setInterval(updateChart, 5000);
+                    startUpdates();
                 });
             document.getElementById('pause-btn').addEventListener('click', togglePause);
             document.getElementById('view-select').addEventListener('change', (e) => {
