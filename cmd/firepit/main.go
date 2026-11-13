@@ -329,29 +329,28 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 		slog.Error("Failed to read index.html", "error", err)
 		os.Exit(1)
 	}
-	indexHTML := strings.ReplaceAll(string(indexBytes), "FIREPIT_BASE_PATH", cfg.BasePath)
+	indexHTML := bytes.ReplaceAll(indexBytes, []byte("FIREPIT_BASE_PATH"), []byte(cfg.BasePath))
 
-	strippedFileServer := http.StripPrefix(base, http.FileServer(http.FS(fsub)))
+	static, err := newStaticFiles(fsub, indexHTML)
+	if err != nil {
+		slog.Error("Failed to load web UI files", "error", err)
+		os.Exit(1)
+	}
 
 	mux.Handle(base+"/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		stripped := strings.TrimPrefix(r.URL.Path, base)
-		if stripped == "/" || stripped == "" || stripped == "/index.html" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprint(w, indexHTML)
-			return
-		}
-		strippedFileServer.ServeHTTP(w, r)
+		static.serve(w, r, strings.TrimPrefix(r.URL.Path, base))
 	}))
 
+	// Cache uncompressed responses and compress per request
 	cache := newResponseCache(st)
-	mux.HandleFunc(base+"/api/flamegraph", cache.wrap(handleFlamegraph(st, cfg.VirtualFrames)))
-	mux.HandleFunc(base+"/api/flamescope", cache.wrap(handleFlamescope(st)))
-	mux.HandleFunc(base+"/api/sandwich", cache.wrap(handleSandwich(st, cfg.VirtualFrames)))
-	mux.HandleFunc(base+"/api/sandwich-detail", cache.wrap(handleSandwichDetail(st, cfg.VirtualFrames)))
-	mux.HandleFunc(base+"/api/profiles", cache.wrap(handleProfiles(st)))
-	mux.HandleFunc(base+"/api/resource-types", cache.wrap(handleResourceTypes(st)))
-	mux.HandleFunc(base+"/api/attribute-keys", cache.wrap(handleAttributeKeys(st)))
-	mux.HandleFunc(base+"/api/config", handleConfig(cfg))
+	mux.HandleFunc(base+"/api/flamegraph", compressResponse(cache.wrap(handleFlamegraph(st, cfg.VirtualFrames))))
+	mux.HandleFunc(base+"/api/flamescope", compressResponse(cache.wrap(handleFlamescope(st))))
+	mux.HandleFunc(base+"/api/sandwich", compressResponse(cache.wrap(handleSandwich(st, cfg.VirtualFrames))))
+	mux.HandleFunc(base+"/api/sandwich-detail", compressResponse(cache.wrap(handleSandwichDetail(st, cfg.VirtualFrames))))
+	mux.HandleFunc(base+"/api/profiles", compressResponse(cache.wrap(handleProfiles(st))))
+	mux.HandleFunc(base+"/api/resource-types", compressResponse(cache.wrap(handleResourceTypes(st))))
+	mux.HandleFunc(base+"/api/attribute-keys", compressResponse(cache.wrap(handleAttributeKeys(st))))
+	mux.HandleFunc(base+"/api/config", compressResponse(handleConfig(cfg)))
 
 	prefix := base + "/debug/pprof"
 	if cfg.RuntimeProfiling {
