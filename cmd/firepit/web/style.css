@@ -254,6 +254,16 @@ svg g.flame-highlight text {
     max-width: 400px;
     word-break: break-all;
 }
+.spectrum-header {
+    cursor: pointer;
+    user-select: none;
+}
+.spectrum-header rect {
+    fill: #ecf0f1;
+}
+.spectrum-header:hover rect {
+    fill: #d0d7de;
+}
 .sandwich-container {
     width: 100%;
     height: calc(100vh - 240px);

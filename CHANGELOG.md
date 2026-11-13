@@ -2,6 +2,8 @@
 
 ## Untagged
 
+- Add Spectrogram view
+
 ## v0.3.0
 
 - Support index based keys and values in ResourceAttributes

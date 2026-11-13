@@ -319,6 +319,61 @@ func TestAPIMethods(t *testing.T) {
 	}
 }
 
+func TestHandleSpectrogram(t *testing.T) {
+	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
+	defer st.Close()
+
+	handler := handleSpectrogram(st)
+
+	tests := []struct {
+		name       string
+		method     string
+		query      string
+		statusCode int
+	}{
+		{
+			name:       "GET request",
+			method:     http.MethodGet,
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "GET with resourceType filter",
+			method:     http.MethodGet,
+			query:      "?resourceType=service.name:myservice",
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "POST not allowed",
+			method:     http.MethodPost,
+			statusCode: http.StatusMethodNotAllowed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/api/spectrogram"+tt.query, nil)
+			w := httptest.NewRecorder()
+
+			handler(w, req)
+
+			if w.Code != tt.statusCode {
+				t.Errorf("expected status %d, got %d", tt.statusCode, w.Code)
+			}
+
+			if tt.statusCode == http.StatusOK {
+				if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+					t.Errorf("expected Content-Type application/json, got %s", ct)
+				}
+
+				var result []any
+				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+					t.Errorf("response is not valid JSON: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestFlamegraphOptions(t *testing.T) {
 	defaults := []string{"service.name"}
 	tests := []struct {
@@ -720,5 +775,48 @@ func TestWebUIAssets(t *testing.T) {
 	index := read("index.html")
 	if strings.Contains(index, "<style") || strings.Count(index, "<script>") != 1 {
 		t.Error("index.html contains inline styles or scripts")
+	}
+}
+
+// TestHandleSpectrogramSeparatesSampleTypes checks that each sample type gets its own spectrogram.
+func TestHandleSpectrogramSeparatesSampleTypes(t *testing.T) {
+	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
+	defer st.Close()
+
+	now := uint64(time.Now().UnixNano())
+	profile := func(typeIdx int32, value int64) *profilespb.Profile {
+		return &profilespb.Profile{
+			SampleType:   &profilespb.ValueType{TypeStrindex: typeIdx},
+			TimeUnixNano: now,
+			Samples:      []*profilespb.Sample{{Values: []int64{value}}},
+		}
+	}
+	st.Add([]*profilespb.ResourceProfiles{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{{
+			Key:   "service.name",
+			Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "svc"}},
+		}}},
+		ScopeProfiles: []*profilespb.ScopeProfiles{{
+			Profiles: []*profilespb.Profile{profile(1, 3), profile(2, 7)},
+		}},
+	}}, &profilespb.ProfilesDictionary{StringTable: []string{"", "cpu", "alloc"}})
+
+	w := httptest.NewRecorder()
+	handleSpectrogram(st)(w, httptest.NewRequest(http.MethodGet, "/api/spectrogram", nil))
+
+	var result []profiler.NamedSpectrogram
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+
+	got := map[string]int64{}
+	for _, s := range result {
+		if len(s.Data.Categories) != 1 || len(s.Data.Categories[0].Rows) != 1 {
+			t.Fatalf("%s: expected a single service.name row, got %+v", s.Type, s.Data)
+		}
+		got[s.Type] = s.Data.Categories[0].Rows[0].Total
+	}
+	if len(got) != 2 || got["cpu"] != 3 || got["alloc"] != 7 {
+		t.Fatalf("expected cpu=3 and alloc=7 in separate spectrograms, got %v", got)
 	}
 }

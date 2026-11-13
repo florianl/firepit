@@ -13,6 +13,7 @@ import {
     hasData,
     hasHeatMapData,
     hasSandwichData,
+    hasSpectrogramData,
     heatMapCells,
     matchesFrameFilter,
     nameSaturation,
@@ -20,6 +21,7 @@ import {
     resourceFilterParams,
     sanitizeId,
     sortSandwichFunctions,
+    spectrogramLayout,
     toQuery,
     wrapText,
 } from '../web/lib.js';
@@ -95,6 +97,40 @@ test('hasHeatMapData requires seconds', () => {
     assert.equal(hasHeatMapData(null), false);
     assert.equal(hasHeatMapData({ numSeconds: 0 }), false);
     assert.equal(hasHeatMapData({ numSeconds: 3 }), true);
+});
+
+test('hasSpectrogramData requires buckets', () => {
+    assert.equal(hasSpectrogramData(null), false);
+    assert.equal(hasSpectrogramData({ numBuckets: 0 }), false);
+    assert.equal(hasSpectrogramData({ numBuckets: 2 }), true);
+});
+
+test('spectrogramLayout skips the rows of collapsed categories', () => {
+    const a1 = { value: '1' }, a2 = { value: '2' }, b1 = { value: 'x' };
+    const categories = [
+        { key: 'a', rows: [a1, a2] },
+        { key: 'b', rows: [b1] },
+    ];
+    assert.deepEqual(spectrogramLayout(categories, new Set(), 20, 10, 5), {
+        headers: [
+            { key: 'a', count: 2, collapsed: false, y: 0 },
+            { key: 'b', count: 1, collapsed: false, y: 45 },
+        ],
+        rows: [
+            { key: 'a', row: a1, y: 20 },
+            { key: 'a', row: a2, y: 30 },
+            { key: 'b', row: b1, y: 65 },
+        ],
+        height: 80,
+    });
+    assert.deepEqual(spectrogramLayout(categories, new Set(['a']), 20, 10, 5), {
+        headers: [
+            { key: 'a', count: 2, collapsed: true, y: 0 },
+            { key: 'b', count: 1, collapsed: false, y: 25 },
+        ],
+        rows: [{ key: 'b', row: b1, y: 45 }],
+        height: 60,
+    });
 });
 
 test('hasSandwichData requires functions', () => {
