@@ -50,3 +50,24 @@ Virtual frames are synthetic frames, derived from resource or sample attributes,
 Virtual frames are selected in the Web UI with the *Virtual frames* dropdown, in the order they should be nested. By default none are selected; `-virtual-frames` / `VIRTUAL_FRAMES` sets a preselection.
 
 The `/api/flamegraph`, `/api/sandwich` and `/api/sandwich-detail` endpoints accept a `virtualFrames` query parameter with a comma separated list of keys. If the parameter is missing, the configured keys are used; if it is empty, no virtual frames are added.
+
+## Observing firepit
+
+The Web UI server exposes two endpoints about firepit itself:
+
+- `<base-path>/healthz` answers `200 ok` while firepit is serving requests. It is also available as `/healthz` if a base path is set.
+- `<base-path>/metrics` serves metrics in the Prometheus text format:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `firepit_receiver_requests_total{protocol,result}` | counter | Export requests by protocol (`grpc`, `http`) and result (`accepted`, `invalid`, `too_large`) |
+| `firepit_store_requests_dropped_total` | counter | Accepted requests discarded for lacking a dictionary |
+| `firepit_store_profiles` | gauge | Profiles currently stored |
+| `firepit_store_sample_types` | gauge | Sample types of the stored profiles |
+| `firepit_store_bytes` | gauge | Size accounted for the stored profiles |
+| `firepit_store_limit_bytes` | gauge | Storage limit; `0` if unlimited |
+| `firepit_store_profiles_added_total` | counter | Profiles added to the store |
+| `firepit_store_profiles_removed_total{reason}` | counter | Profiles removed, by reason (`expired`, `evicted`) |
+| `firepit_heap_objects_bytes` | gauge | Memory occupied by objects on the Go heap |
+| `firepit_goroutines` | gauge | Number of goroutines |
+| `firepit_start_time_seconds` | gauge | Start time of the process |

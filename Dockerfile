@@ -47,7 +47,7 @@ EXPOSE 4317 4318 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080 || exit 1
+    CMD curl -f http://localhost:8080/healthz || exit 1
 
 # Run firepit
 CMD ["./firepit"]

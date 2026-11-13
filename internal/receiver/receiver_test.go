@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,7 +24,7 @@ import (
 func TestNewReceiver(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	r := New(st)
+	r := New(st, nil)
 
 	if r == nil {
 		t.Fatal("Receiver should not be nil")
@@ -33,7 +34,7 @@ func TestNewReceiver(t *testing.T) {
 func TestNewHTTPHandler(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024)
+	handler := NewHTTPHandler(st, 32*1024*1024, nil)
 
 	if handler == nil {
 		t.Fatal("HTTP handler should not be nil")
@@ -43,7 +44,7 @@ func TestNewHTTPHandler(t *testing.T) {
 func TestHTTPHandlerInvalidMethod(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024)
+	handler := NewHTTPHandler(st, 32*1024*1024, nil)
 
 	req := httptest.NewRequest("GET", "/v1/profiles", nil)
 	w := httptest.NewRecorder()
@@ -58,7 +59,7 @@ func TestHTTPHandlerInvalidMethod(t *testing.T) {
 func TestHTTPHandlerEmptyBody(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024)
+	handler := NewHTTPHandler(st, 32*1024*1024, nil)
 
 	req := httptest.NewRequest("POST", "/v1/profiles", bytes.NewReader([]byte("")))
 	w := httptest.NewRecorder()
@@ -73,7 +74,7 @@ func TestHTTPHandlerEmptyBody(t *testing.T) {
 func TestHTTPHandlerValidRequest(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024)
+	handler := NewHTTPHandler(st, 32*1024*1024, nil)
 
 	dict := &profilespb.ProfilesDictionary{
 		StringTable: []string{"root", "main"},
@@ -123,7 +124,7 @@ func TestHTTPHandlerValidRequest(t *testing.T) {
 func TestHTTPHandlerMalformedJSON(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024)
+	handler := NewHTTPHandler(st, 32*1024*1024, nil)
 
 	req := httptest.NewRequest("POST", "/v1/profiles", bytes.NewReader([]byte("not json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -139,7 +140,7 @@ func TestHTTPHandlerMalformedJSON(t *testing.T) {
 func TestHTTPHandlerWithResourceAttributes(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024)
+	handler := NewHTTPHandler(st, 32*1024*1024, nil)
 
 	dict := &profilespb.ProfilesDictionary{
 		StringTable: []string{"root", "main", "service.name", "my-service"},
@@ -194,7 +195,7 @@ func TestHTTPHandlerWithResourceAttributes(t *testing.T) {
 func TestGRPCReceiverProfile(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	receiver := New(st)
+	receiver := New(st, nil)
 
 	dict := &profilespb.ProfilesDictionary{
 		StringTable: []string{"root", "main"},
@@ -233,7 +234,7 @@ func TestGRPCReceiverProfile(t *testing.T) {
 func TestHTTPHandlerOptions(t *testing.T) {
 	st := store.New(10*time.Minute, 5*time.Second, 0)
 	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024)
+	handler := NewHTTPHandler(st, 32*1024*1024, nil)
 
 	req := httptest.NewRequest("OPTIONS", "/v1/profiles", nil)
 	w := httptest.NewRecorder()
@@ -296,7 +297,7 @@ func TestHTTPHandlerContentEncoding(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			st := store.New(10*time.Minute, time.Hour, 0)
 			defer st.Close()
-			handler := NewHTTPHandler(st, tt.maxBodySize)
+			handler := NewHTTPHandler(st, tt.maxBodySize, nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/profiles", bytes.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -339,4 +340,36 @@ func TestReadBody(t *testing.T) {
 			t.Errorf("Content-Length %d: body = %q, err = %v", contentLength, body, err)
 		}
 	}
+}
+
+func TestMetricsCountRequests(t *testing.T) {
+	st := store.New(10*time.Minute, time.Hour, 0)
+	defer st.Close()
+	metrics := &Metrics{}
+
+	handler := NewHTTPHandler(st, 64, metrics)
+	for _, body := range []string{`{}`, `{}`, `{`, `{"resourceProfiles":[` + strings.Repeat(" ", 100) + `]}`} {
+		handler(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/profiles", strings.NewReader(body)))
+	}
+	handler(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/profiles", nil))
+
+	if _, err := New(st, metrics).Export(context.Background(), &collectorprofiles.ExportProfilesServiceRequest{}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]uint64{"grpc accepted": 1, "http accepted": 2, "http invalid": 2, "http too_large": 1}
+	got := map[string]uint64{}
+	for _, c := range metrics.Requests() {
+		got[c.Protocol+" "+c.Result] = c.Count
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("requests = %v, want %v", got, want)
+	}
+
+	// Receivers work without metrics.
+	var none *Metrics
+	if none.Requests() != nil {
+		t.Error("nil Metrics reports requests")
+	}
+	NewHTTPHandler(st, 64, nil)(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/profiles", strings.NewReader(`{}`)))
 }
