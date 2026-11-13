@@ -343,13 +343,14 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 		strippedFileServer.ServeHTTP(w, r)
 	}))
 
-	mux.HandleFunc(base+"/api/flamegraph", handleFlamegraph(st, cfg.VirtualFrames))
-	mux.HandleFunc(base+"/api/flamescope", handleFlamescope(st))
-	mux.HandleFunc(base+"/api/sandwich", handleSandwich(st, cfg.VirtualFrames))
-	mux.HandleFunc(base+"/api/sandwich-detail", handleSandwichDetail(st, cfg.VirtualFrames))
-	mux.HandleFunc(base+"/api/profiles", handleProfiles(st))
-	mux.HandleFunc(base+"/api/resource-types", handleResourceTypes(st))
-	mux.HandleFunc(base+"/api/attribute-keys", handleAttributeKeys(st))
+	cache := newResponseCache(st)
+	mux.HandleFunc(base+"/api/flamegraph", cache.wrap(handleFlamegraph(st, cfg.VirtualFrames)))
+	mux.HandleFunc(base+"/api/flamescope", cache.wrap(handleFlamescope(st)))
+	mux.HandleFunc(base+"/api/sandwich", cache.wrap(handleSandwich(st, cfg.VirtualFrames)))
+	mux.HandleFunc(base+"/api/sandwich-detail", cache.wrap(handleSandwichDetail(st, cfg.VirtualFrames)))
+	mux.HandleFunc(base+"/api/profiles", cache.wrap(handleProfiles(st)))
+	mux.HandleFunc(base+"/api/resource-types", cache.wrap(handleResourceTypes(st)))
+	mux.HandleFunc(base+"/api/attribute-keys", cache.wrap(handleAttributeKeys(st)))
 	mux.HandleFunc(base+"/api/config", handleConfig(cfg))
 
 	prefix := base + "/debug/pprof"
