@@ -109,6 +109,9 @@ type FlameNode struct {
 	Value       int64                 `json:"value"`
 	Children    []*FlameNode          `json:"children,omitempty"`
 	childrenMap map[string]*FlameNode `json:"-"`
+	// samples counts the samples through the node. Unlike Value it tells
+	// when the node can be pruned, as sample values may be negative.
+	samples int64
 }
 
 type FrameInfo struct {
@@ -265,9 +268,7 @@ func ToFlamegraph(entries []store.ProfileEntry, opts Options) *FlameNode {
 	for _, entry := range entries {
 		if entry.Profile != nil && entry.Dictionary != nil {
 			profileCount++
-			resFrames := resourceVirtualFrames(entry, opts.VirtualFrameKeys)
-			resolver.use(entry.Dictionary)
-			processProfile(root, entry.Profile, entry.Dictionary, resolver, opts.VirtualFrameKeys, resFrames)
+			applyEntry(root, entry, opts, resolver, 1)
 		}
 	}
 	resolver.release()
@@ -280,8 +281,34 @@ func ToFlamegraph(entries []store.ProfileEntry, opts Options) *FlameNode {
 	return root
 }
 
+// applyEntry adds (sign 1) or removes (sign -1) the samples of entry.
+// Removal leaves empty nodes behind, see pruneFlameNode.
+func applyEntry(root *FlameNode, entry store.ProfileEntry, opts Options, resolver *stackResolver, sign int64) {
+	if entry.Profile == nil || entry.Dictionary == nil {
+		return
+	}
+	resFrames := resourceVirtualFrames(entry, opts.VirtualFrameKeys)
+	resolver.use(entry.Dictionary)
+	processProfile(root, entry.Profile, entry.Dictionary, resolver, opts.VirtualFrameKeys, resFrames, sign)
+}
+
+// pruneFlameNode removes the descendants of node without samples.
+func pruneFlameNode(node *FlameNode) {
+	kept := node.Children[:0]
+	for _, child := range node.Children {
+		if child.samples == 0 {
+			delete(node.childrenMap, child.Name)
+			continue
+		}
+		pruneFlameNode(child)
+		kept = append(kept, child)
+	}
+	clear(node.Children[len(kept):])
+	node.Children = kept
+}
+
 func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, resolver *stackResolver,
-	virtualKeys []string, resFrames []FrameInfo,
+	virtualKeys []string, resFrames []FrameInfo, sign int64,
 ) {
 	if profile == nil || len(profile.Samples) == 0 {
 		return
@@ -321,7 +348,7 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 			prefix = resolver.sampleVirtualFrames(prefixBuf, sample, virtualKeys, resFrames)
 		}
 
-		insertStack(root, prefix, stack, value)
+		insertStack(root, prefix, stack, sign*value, sign)
 	}
 }
 
@@ -447,15 +474,16 @@ func (r *stackResolver) resolveLocation(idx int32) []FrameInfo {
 	return r.locArena[start:end]
 }
 
-// insertStack adds value along the path of prefix followed by stack.
-func insertStack(root *FlameNode, prefix, stack []FrameInfo, value int64) {
+// insertStack adds value and samples along the path of prefix and stack.
+func insertStack(root *FlameNode, prefix, stack []FrameInfo, value, samples int64) {
 	root.Value += value
+	root.samples += samples
 	current := root
 	for _, frame := range prefix {
-		current = insertFrame(current, frame, value)
+		current = insertFrame(current, frame, value, samples)
 	}
 	for _, frame := range stack {
-		current = insertFrame(current, frame, value)
+		current = insertFrame(current, frame, value, samples)
 	}
 }
 
@@ -487,9 +515,8 @@ func (n *FlameNode) addChild(child *FlameNode) {
 	}
 }
 
-// insertFrame adds value to the child of current matching frame, creating it
-// if needed, and returns that child.
-func insertFrame(current *FlameNode, frame FrameInfo, value int64) *FlameNode {
+// insertFrame adds value and samples to the child for frame, creating it if needed.
+func insertFrame(current *FlameNode, frame FrameInfo, value, samples int64) *FlameNode {
 	child := current.findChild(frame.Name)
 	if child == nil {
 		child = &FlameNode{
@@ -502,6 +529,7 @@ func insertFrame(current *FlameNode, frame FrameInfo, value int64) *FlameNode {
 	}
 
 	child.Value += value
+	child.samples += samples
 	return child
 }
 
@@ -572,7 +600,7 @@ func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 			current := newRoot
 			for i := len(callers) - 1; i >= 0; i-- {
 				c := callers[i]
-				current = insertFrame(current, FrameInfo{Name: c.Name, Filename: c.Filename, FrameType: c.FrameType}, node.Value)
+				current = insertFrame(current, FrameInfo{Name: c.Name, Filename: c.Filename, FrameType: c.FrameType}, node.Value, 1)
 			}
 			return
 		}

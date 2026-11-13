@@ -19,6 +19,8 @@ import (
 )
 
 type ProfileEntry struct {
+	// ID is assigned in ascending order, keeping entries sorted by ID.
+	ID                 uint64
 	CreatedAt          time.Time
 	Profile            *profilespb.Profile
 	Dictionary         *profilespb.ProfilesDictionary
@@ -187,6 +189,7 @@ type Store struct {
 	cleanupInterval time.Duration
 	maxMemory       int64 // 0 = unlimited
 	totalBytes      int64
+	lastID          uint64 // guarded by mu
 	generation      atomic.Uint64
 	changed         chan struct{} // closed and replaced on every change
 	done            chan struct{}
@@ -266,7 +269,6 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	st := dictionary.StringTable
 	seenResourceAttrs := make(map[ResourceAttribute]bool)
 	seenAttributeKeys := make(map[string]bool)
-
 	// Shared data is accounted in equal shares to the profiles using it.
 	numProfiles := 0
 	for _, rp := range resourceProfiles {
@@ -353,6 +355,9 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	defer s.mu.Unlock()
 
 	for _, e := range newEntries {
+		// Assign IDs under the lock to keep entries sorted.
+		s.lastID++
+		e.entry.ID = s.lastID
 		s.entries[e.key] = append(s.entries[e.key], e.entry)
 		s.totalBytes += e.entry.Size
 		s.addedProfiles++
