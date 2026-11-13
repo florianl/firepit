@@ -188,6 +188,7 @@ type Store struct {
 	maxMemory       int64 // 0 = unlimited
 	totalBytes      int64
 	generation      atomic.Uint64
+	changed         chan struct{} // closed and replaced on every change
 	done            chan struct{}
 }
 
@@ -199,6 +200,7 @@ func New(maxAge, cleanupInterval time.Duration, maxMemory int64) *Store {
 		maxAge:          maxAge,
 		cleanupInterval: cleanupInterval,
 		maxMemory:       maxMemory,
+		changed:         make(chan struct{}),
 		done:            make(chan struct{}),
 	}
 	go s.cleanupLoop()
@@ -318,11 +320,26 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	s.resourceAttrs = mergeSorted(s.resourceAttrs, seenResourceAttrs, compareResourceAttributes)
 	s.attributeKeys = mergeSorted(s.attributeKeys, seenAttributeKeys, strings.Compare)
 	s.generation.Add(1)
+	s.notifyChanged()
 }
 
 // Generation returns a counter that changes whenever profiles are added or removed.
 func (s *Store) Generation() uint64 {
 	return s.generation.Load()
+}
+
+// Changed returns a channel that is closed on the next change of the stored
+// profiles. Get it before reading the store to not miss a change.
+func (s *Store) Changed() <-chan struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.changed
+}
+
+// notifyChanged wakes up waiters on Changed. s.mu must be held.
+func (s *Store) notifyChanged() {
+	close(s.changed)
+	s.changed = make(chan struct{})
 }
 
 // mergeSorted returns the sorted union of sorted and seen without modifying sorted.
@@ -476,6 +493,7 @@ func (s *Store) cleanup() {
 		return
 	}
 	s.generation.Add(1)
+	s.notifyChanged()
 
 	// Update ResourceAttributes for filtering
 	seenResourceAttrs := make(map[ResourceAttribute]bool)

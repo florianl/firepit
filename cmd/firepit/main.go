@@ -348,8 +348,17 @@ func newHTTPServer(addr string, handler http.Handler, timeouts serverTimeouts) *
 	}
 }
 
+// buildWebUIMux returns the handler of the web UI.
 func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
+	mux, _ := buildWebUI(st, cfg)
+	return mux
+}
+
+// buildWebUI returns the handler of the web UI and a function to end its event streams.
+func buildWebUI(st *store.Store, cfg Config) (*http.ServeMux, func()) {
 	mux := http.NewServeMux()
+	done := make(chan struct{})
+	stop := sync.OnceFunc(func() { close(done) })
 	base := cfg.BasePath
 
 	fsub, err := fs.Sub(webFS, "web")
@@ -386,6 +395,7 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 	mux.HandleFunc(base+"/api/resource-attributes", compressResponse(cache.wrap(handleResourceAttributes(st))))
 	mux.HandleFunc(base+"/api/attribute-keys", compressResponse(cache.wrap(handleAttributeKeys(st))))
 	mux.HandleFunc(base+"/api/config", compressResponse(handleConfig(cfg)))
+	mux.HandleFunc(base+"/api/events", handleEvents(st, done, eventMinInterval, eventHeartbeat))
 
 	prefix := base + "/debug/pprof"
 	if cfg.RuntimeProfiling {
@@ -405,16 +415,17 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 		mux.Handle("/", http.RedirectHandler(base+"/", http.StatusMovedPermanently))
 	}
 
-	return mux
+	return mux, stop
 }
 
 func startWebUIServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.Server {
-	mux := buildWebUIMux(st, cfg)
+	mux, stop := buildWebUI(st, cfg)
 
 	// Runtime profiling endpoints stream for as long as the client asks for.
 	timeouts := defaultTimeouts
 	timeouts.write = 0
 	server := newHTTPServer(cfg.WebAddr, mux, timeouts)
+	server.RegisterOnShutdown(stop)
 
 	slog.Info("Web UI listening", "addr", cfg.WebAddr)
 	slog.Info("Open browser to", "url", "http://localhost"+cfg.WebAddr+cfg.BasePath)
