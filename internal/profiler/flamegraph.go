@@ -2,7 +2,6 @@
 package profiler
 
 import (
-	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -30,10 +29,70 @@ type Options struct {
 	VirtualFrameKeys []string
 }
 
-var stackCachePool = sync.Pool{
+var stackResolverPool = sync.Pool{
 	New: func() any {
-		return make(map[int32][]FrameInfo)
+		return &stackResolver{}
 	},
+}
+
+// childrenMapThreshold is the number of children above which a node indexes
+// them with a map. Most nodes have only a few children.
+const childrenMapThreshold = 8
+
+// frameRange is the range [start, end) of frames in a stackResolver arena.
+type frameRange struct {
+	start, end int32
+	done       bool
+}
+
+// stackResolver resolves and caches the stacks of one dictionary. The frame
+// arenas are reused across dictionaries.
+type stackResolver struct {
+	dict *profilespb.ProfilesDictionary
+	// Indexed by stack and location index, frames in root-to-leaf order.
+	stacks     []frameRange
+	stackArena []FrameInfo
+	locs       []frameRange
+	locArena   []FrameInfo
+	// Indexed by attribute index, valid for one set of virtual frame keys.
+	virtual []virtualFrame
+}
+
+// virtualFrame caches the virtual frame of an attribute.
+type virtualFrame struct {
+	// Index into the virtual frame keys, or -1 if not a virtual frame.
+	key   int
+	frame FrameInfo
+	done  bool
+}
+
+// use switches the resolver to dict, dropping the cache if dict changed.
+func (r *stackResolver) use(dict *profilespb.ProfilesDictionary) {
+	if r.dict == dict {
+		return
+	}
+	r.release()
+	r.dict = dict
+	if dict == nil {
+		return
+	}
+	r.stacks = slices.Grow(r.stacks, len(dict.StackTable))[:len(dict.StackTable)]
+	r.locs = slices.Grow(r.locs, len(dict.LocationTable))[:len(dict.LocationTable)]
+	r.virtual = slices.Grow(r.virtual, len(dict.AttributeTable))[:len(dict.AttributeTable)]
+}
+
+// release drops the cache but keeps the allocated buffers.
+func (r *stackResolver) release() {
+	r.dict = nil
+	clear(r.stacks)
+	clear(r.locs)
+	// Drop references to the dictionary strings.
+	clear(r.stackArena)
+	clear(r.locArena)
+	clear(r.virtual)
+	r.virtual = r.virtual[:0]
+	r.stacks, r.stackArena = r.stacks[:0], r.stackArena[:0]
+	r.locs, r.locArena = r.locs[:0], r.locArena[:0]
 }
 
 type FlameNode struct {
@@ -70,24 +129,6 @@ type SandwichData struct {
 type NamedSandwich struct {
 	Type string        `json:"type"`
 	Data *SandwichData `json:"data"`
-}
-
-// stackTableLookup safely looks up a stack entry by index.
-// Returns nil if the index is out of bounds or negative.
-func stackTableLookup(dict *profilespb.ProfilesDictionary, idx int32) *profilespb.Stack {
-	if idx < 0 || int(idx) >= len(dict.StackTable) {
-		return nil
-	}
-	return dict.StackTable[idx]
-}
-
-// locationTableLookup safely looks up a location by index.
-// Returns nil if the index is out of bounds or negative.
-func locationTableLookup(dict *profilespb.ProfilesDictionary, idx int32) *profilespb.Location {
-	if idx < 0 || int(idx) >= len(dict.LocationTable) {
-		return nil
-	}
-	return dict.LocationTable[idx]
 }
 
 // functionTableLookup safely looks up a function by index.
@@ -226,17 +267,18 @@ func ToFlamegraph(entries []store.ProfileEntry, opts Options) *FlameNode {
 		childrenMap: nil,
 	}
 
+	resolver := stackResolverPool.Get().(*stackResolver)
 	profileCount := 0
 	for _, entry := range entries {
 		if entry.Profile != nil && entry.Dictionary != nil {
 			profileCount++
 			resFrames := resourceVirtualFrames(entry, opts.VirtualFrameKeys)
-			stackCache := stackCachePool.Get().(map[int32][]FrameInfo)
-			processProfile(root, entry.Profile, entry.Dictionary, stackCache, opts.VirtualFrameKeys, resFrames)
-			clear(stackCache)
-			stackCachePool.Put(stackCache)
+			resolver.use(entry.Dictionary)
+			processProfile(root, entry.Profile, entry.Dictionary, resolver, opts.VirtualFrameKeys, resFrames)
 		}
 	}
+	resolver.release()
+	stackResolverPool.Put(resolver)
 
 	if profileCount > 0 && root.Value == 0 {
 		slog.Warn("Processed profiles but got no data", "profile_count", profileCount)
@@ -245,7 +287,7 @@ func ToFlamegraph(entries []store.ProfileEntry, opts Options) *FlameNode {
 	return root
 }
 
-func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo,
+func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, resolver *stackResolver,
 	virtualKeys []string, resFrames []FrameInfo,
 ) {
 	if profile == nil || len(profile.Samples) == 0 {
@@ -276,14 +318,14 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 			continue
 		}
 
-		stack := resolveStack(sample, dict, stackCache)
+		stack := resolver.resolveStack(sample.StackIndex)
 		if len(stack) == 0 {
 			continue
 		}
 
 		prefix := resFrames
 		if len(virtualKeys) > 0 && len(sample.AttributeIndices) > 0 {
-			prefix = sampleVirtualFrames(prefixBuf, sample, dict, virtualKeys, resFrames)
+			prefix = resolver.sampleVirtualFrames(prefixBuf, sample, virtualKeys, resFrames)
 		}
 
 		insertStack(root, prefix, stack, value)
@@ -292,25 +334,33 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 
 // sampleVirtualFrames fills buf with resFrames and overrides frames whose key
 // is set as a sample attribute. It returns resFrames if no key matched.
-func sampleVirtualFrames(buf []FrameInfo, sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, keys []string, resFrames []FrameInfo) []FrameInfo {
+func (r *stackResolver) sampleVirtualFrames(buf []FrameInfo, sample *profilespb.Sample, keys []string, resFrames []FrameInfo) []FrameInfo {
 	matched := false
 	for _, attrIdx := range sample.AttributeIndices {
-		attr := attributeTableLookup(dict, attrIdx)
-		if attr == nil || attr.Value == nil {
+		if attrIdx < 0 || int(attrIdx) >= len(r.virtual) {
 			continue
 		}
-		i := slices.Index(keys, stringTableLookup(dict, attr.KeyStrindex))
-		if i < 0 {
+		vf := &r.virtual[attrIdx]
+		if !vf.done {
+			*vf = virtualFrame{key: -1, done: true}
+			if attr := r.dict.AttributeTable[attrIdx]; attr != nil && attr.Value != nil {
+				vf.key = slices.Index(keys, stringTableLookup(r.dict, attr.KeyStrindex))
+				if vf.key >= 0 {
+					vf.frame = FrameInfo{
+						Name:      virtualFrameName(keys[vf.key], attrValueString(r.dict.StringTable, attr.Value)),
+						FrameType: VirtualFrameType,
+					}
+				}
+			}
+		}
+		if vf.key < 0 {
 			continue
 		}
 		if !matched {
 			copy(buf, resFrames)
 			matched = true
 		}
-		buf[i] = FrameInfo{
-			Name:      virtualFrameName(keys[i], attrValueString(dict.StringTable, attr.Value)),
-			FrameType: VirtualFrameType,
-		}
+		buf[vf.key] = vf.frame
 	}
 	if !matched {
 		return resFrames
@@ -318,41 +368,52 @@ func sampleVirtualFrames(buf []FrameInfo, sample *profilespb.Sample, dict *profi
 	return buf
 }
 
-func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary, stackCache map[int32][]FrameInfo) []FrameInfo {
-	if dict == nil {
+// resolveStack returns the frames of stack idx in root-to-leaf order. The
+// result is valid until the next resolveStack or use call.
+func (r *stackResolver) resolveStack(idx int32) []FrameInfo {
+	if idx < 0 || int(idx) >= len(r.stacks) {
 		return nil
 	}
-
-	// Check if this stack is already resolved
-	if cached, ok := stackCache[sample.StackIndex]; ok {
-		return cached
+	if s := r.stacks[idx]; s.done {
+		return r.stackArena[s.start:s.end]
 	}
 
-	// Get the stack from the dictionary using the stack_index
-	stackEntry := stackTableLookup(dict, sample.StackIndex)
-	if stackEntry == nil {
-		stackCache[sample.StackIndex] = nil
-		return nil
-	}
-
-	stack := make([]FrameInfo, 0, len(stackEntry.LocationIndices))
-	// Process each location in the stack
-	for _, locIdx := range stackEntry.LocationIndices {
-		loc := locationTableLookup(dict, locIdx)
-		if loc == nil {
-			continue
+	start := len(r.stackArena)
+	if stackEntry := r.dict.StackTable[idx]; stackEntry != nil {
+		// location_indices are leaf-first
+		for _, locIdx := range slices.Backward(stackEntry.LocationIndices) {
+			r.stackArena = append(r.stackArena, r.resolveLocation(locIdx)...)
 		}
+	}
+	end := len(r.stackArena)
 
+	r.stacks[idx] = frameRange{start: int32(start), end: int32(end), done: true}
+	return r.stackArena[start:end]
+}
+
+// resolveLocation returns the frames of location idx in root-to-leaf order,
+// including inlined functions. The result is valid until the next
+// resolveLocation or use call.
+func (r *stackResolver) resolveLocation(idx int32) []FrameInfo {
+	if idx < 0 || int(idx) >= len(r.locs) {
+		return nil
+	}
+	if l := r.locs[idx]; l.done {
+		return r.locArena[l.start:l.end]
+	}
+
+	dict := r.dict
+	start := len(r.locArena)
+	if loc := dict.LocationTable[idx]; loc != nil {
 		frameType := frameTypeFromLocation(dict, loc)
 
 		if len(loc.Lines) == 0 {
 			// Location has no line info; use address as fallback
-			stack = append(stack, FrameInfo{Name: "[0x" + strconv.FormatUint(loc.Address, 16) + "]", FrameType: frameType})
-			continue
+			r.locArena = append(r.locArena, FrameInfo{Name: "[0x" + strconv.FormatUint(loc.Address, 16) + "]", FrameType: frameType})
 		}
 
-		// Get the function names from the location's lines
-		for _, line := range loc.Lines {
+		// Lines are leaf-first
+		for _, line := range slices.Backward(loc.Lines) {
 			if line == nil {
 				continue
 			}
@@ -366,20 +427,16 @@ func resolveStack(sample *profilespb.Sample, dict *profilespb.ProfilesDictionary
 			if name != "" {
 				filename := stringTableLookup(dict, fn.FilenameStrindex)
 				if line.Line != 0 {
-					filename += fmt.Sprintf(":%d", line.Line)
+					filename += ":" + strconv.FormatInt(line.Line, 10)
 				}
-				stack = append(stack, FrameInfo{Name: name, Filename: filename, FrameType: frameType})
+				r.locArena = append(r.locArena, FrameInfo{Name: name, Filename: filename, FrameType: frameType})
 			}
 		}
 	}
+	end := len(r.locArena)
 
-	// location_indices are leaf-first; reverse to get root-to-leaf order for the flame graph
-	slices.Reverse(stack)
-
-	// Cache the resolved stack
-	stackCache[sample.StackIndex] = stack
-
-	return stack
+	r.locs[idx] = frameRange{start: int32(start), end: int32(end), done: true}
+	return r.locArena[start:end]
 }
 
 // insertStack adds value along the path of prefix followed by stack.
@@ -394,29 +451,46 @@ func insertStack(root *FlameNode, prefix, stack []FrameInfo, value int64) {
 	}
 }
 
+// findChild returns the child of n with the given name, or nil.
+func (n *FlameNode) findChild(name string) *FlameNode {
+	if n.childrenMap != nil {
+		return n.childrenMap[name]
+	}
+	for _, child := range n.Children {
+		if child.Name == name {
+			return child
+		}
+	}
+	return nil
+}
+
+// addChild appends child to n, which must not have a child of the same name.
+func (n *FlameNode) addChild(child *FlameNode) {
+	n.Children = append(n.Children, child)
+	if n.childrenMap != nil {
+		n.childrenMap[child.Name] = child
+		return
+	}
+	if len(n.Children) > childrenMapThreshold {
+		n.childrenMap = make(map[string]*FlameNode, 2*len(n.Children))
+		for _, c := range n.Children {
+			n.childrenMap[c.Name] = c
+		}
+	}
+}
+
 // insertFrame adds value to the child of current matching frame, creating it
 // if needed, and returns that child.
 func insertFrame(current *FlameNode, frame FrameInfo, value int64) *FlameNode {
-	var child *FlameNode
-	var exists bool
-	if current.childrenMap != nil {
-		child, exists = current.childrenMap[frame.Name]
-	}
-	if !exists {
+	child := current.findChild(frame.Name)
+	if child == nil {
 		child = &FlameNode{
-			Name:        frame.Name,
-			Filename:    frame.Filename,
-			FrameType:   frame.FrameType,
-			Value:       0,
-			Children:    []*FlameNode{},
-			childrenMap: nil,
+			Name:      frame.Name,
+			Filename:  frame.Filename,
+			FrameType: frame.FrameType,
+			Children:  []*FlameNode{},
 		}
-		current.Children = append(current.Children, child)
-
-		if current.childrenMap == nil {
-			current.childrenMap = make(map[string]*FlameNode)
-		}
-		current.childrenMap[frame.Name] = child
+		current.addChild(child)
 	}
 
 	child.Value += value
@@ -532,21 +606,11 @@ func extractCalleeSubtrees(node *FlameNode, targetName string, targetRoot *Flame
 		}
 		targetRoot.Value += node.Value
 		for _, child := range node.Children {
-			copiedChild := copyFlameNode(child)
-			var existing *FlameNode
-			var exists bool
-			if targetRoot.childrenMap != nil {
-				existing, exists = targetRoot.childrenMap[copiedChild.Name]
-			}
-			if exists {
+			if existing := targetRoot.findChild(child.Name); existing != nil {
 				// Merge with existing child
-				mergeFlameNodes(existing, copiedChild)
+				mergeFlameNodes(existing, child)
 			} else {
-				targetRoot.Children = append(targetRoot.Children, copiedChild)
-				if targetRoot.childrenMap == nil {
-					targetRoot.childrenMap = make(map[string]*FlameNode)
-				}
-				targetRoot.childrenMap[copiedChild.Name] = copiedChild
+				targetRoot.addChild(copyFlameNode(child))
 			}
 		}
 		return
@@ -571,12 +635,7 @@ func copyFlameNode(node *FlameNode) *FlameNode {
 		childrenMap: nil,
 	}
 	for _, child := range node.Children {
-		copiedChild := copyFlameNode(child)
-		newNode.Children = append(newNode.Children, copiedChild)
-		if newNode.childrenMap == nil {
-			newNode.childrenMap = make(map[string]*FlameNode)
-		}
-		newNode.childrenMap[copiedChild.Name] = copiedChild
+		newNode.addChild(copyFlameNode(child))
 	}
 	return newNode
 }
@@ -584,20 +643,10 @@ func copyFlameNode(node *FlameNode) *FlameNode {
 func mergeFlameNodes(dst, src *FlameNode) {
 	dst.Value += src.Value
 	for _, srcChild := range src.Children {
-		var dstChild *FlameNode
-		var exists bool
-		if dst.childrenMap != nil {
-			dstChild, exists = dst.childrenMap[srcChild.Name]
-		}
-		if exists {
+		if dstChild := dst.findChild(srcChild.Name); dstChild != nil {
 			mergeFlameNodes(dstChild, srcChild)
 		} else {
-			copiedChild := copyFlameNode(srcChild)
-			dst.Children = append(dst.Children, copiedChild)
-			if dst.childrenMap == nil {
-				dst.childrenMap = make(map[string]*FlameNode)
-			}
-			dst.childrenMap[copiedChild.Name] = copiedChild
+			dst.addChild(copyFlameNode(srcChild))
 		}
 	}
 }
