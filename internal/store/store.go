@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -110,6 +111,7 @@ type Store struct {
 	cleanupInterval time.Duration
 	maxMemory       int64 // 0 = unlimited
 	totalBytes      int64
+	generation      atomic.Uint64
 	done            chan struct{}
 }
 
@@ -140,6 +142,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	st := dictionary.StringTable
 	seenResourceTypes := make(map[string]bool)
 	seenAttributeKeys := make(map[string]bool)
+	added := false
 
 	for _, rp := range resourceProfiles {
 		if rp == nil {
@@ -198,6 +201,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 				}
 				s.entries[key] = append(s.entries[key], entry)
 				s.totalBytes += entry.Size
+				added = true
 			}
 		}
 	}
@@ -210,6 +214,15 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	s.attributeKeys = append(s.attributeKeys, slices.Collect(maps.Keys(seenAttributeKeys))...)
 	slices.Sort(s.attributeKeys)
 	s.attributeKeys = slices.Compact(s.attributeKeys)
+
+	if added {
+		s.generation.Add(1)
+	}
+}
+
+// Generation returns a counter that changes whenever profiles are added or removed.
+func (s *Store) Generation() uint64 {
+	return s.generation.Load()
 }
 
 func (s *Store) SampleTypes() []string {
@@ -279,6 +292,7 @@ func (s *Store) cleanupLoop() {
 func (s *Store) cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	removed := 0
 	if s.maxAge > 0 {
 		now := time.Now()
 		for typeStr, entries := range s.entries {
@@ -288,6 +302,7 @@ func (s *Store) cleanup() {
 					kept = append(kept, entry)
 				} else {
 					s.totalBytes -= entry.Size
+					removed++
 				}
 			}
 			if len(kept) > 0 {
@@ -299,7 +314,10 @@ func (s *Store) cleanup() {
 	}
 
 	if s.maxMemory > 0 && s.totalBytes > s.maxMemory {
-		s.evictOldest()
+		removed += s.evictOldest()
+	}
+	if removed > 0 {
+		s.generation.Add(1)
 	}
 
 	// Update ResourceAttributes for filtering
@@ -320,7 +338,8 @@ func (s *Store) cleanup() {
 	s.attributeKeys = slices.Sorted(maps.Keys(seenAttributeKeys))
 }
 
-func (s *Store) evictOldest() {
+// evictOldest drops the oldest profiles to meet the memory limit and returns their count.
+func (s *Store) evictOldest() int {
 	type indexed struct {
 		typeStr string
 		entry   ProfileEntry
@@ -360,6 +379,7 @@ func (s *Store) evictOldest() {
 	if dropped > 0 {
 		slog.Warn("Evicted profiles due to memory limit", "dropped", dropped, "max_memory", s.maxMemory, "current_bytes", s.totalBytes)
 	}
+	return dropped
 }
 
 func (s *Store) Close() {

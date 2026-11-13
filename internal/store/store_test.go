@@ -528,3 +528,45 @@ func TestAttributeKeys(t *testing.T) {
 		t.Fatalf("AttributeKeys() after cleanup = %v, want %v", got, want)
 	}
 }
+
+func TestGeneration(t *testing.T) {
+	s := New(time.Minute, time.Hour, 0)
+	defer s.Close()
+
+	gen := s.Generation()
+
+	// Nothing is stored without a dictionary or without profiles.
+	s.Add([]*profilespb.ResourceProfiles{{}}, nil)
+	s.Add(nil, &profilespb.ProfilesDictionary{StringTable: []string{""}})
+	if got := s.Generation(); got != gen {
+		t.Fatalf("generation changed from %d to %d without storing a profile", gen, got)
+	}
+
+	add := func(ts time.Time) {
+		s.Add([]*profilespb.ResourceProfiles{{
+			ScopeProfiles: []*profilespb.ScopeProfiles{{
+				Profiles: []*profilespb.Profile{{TimeUnixNano: uint64(ts.UnixNano())}},
+			}},
+		}}, &profilespb.ProfilesDictionary{StringTable: []string{""}})
+	}
+
+	add(time.Now())
+	afterAdd := s.Generation()
+	if afterAdd == gen {
+		t.Fatal("generation did not change after adding a profile")
+	}
+
+	// A cleanup that removes nothing keeps the generation.
+	s.cleanup()
+	if got := s.Generation(); got != afterAdd {
+		t.Fatalf("generation changed from %d to %d by a cleanup removing nothing", afterAdd, got)
+	}
+
+	// An expired profile is removed by the cleanup.
+	add(time.Now().Add(-time.Hour))
+	afterExpired := s.Generation()
+	s.cleanup()
+	if got := s.Generation(); got == afterExpired {
+		t.Fatal("generation did not change after removing an expired profile")
+	}
+}

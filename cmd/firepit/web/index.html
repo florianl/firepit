@@ -604,7 +604,7 @@
                 remove.addEventListener('click', () => {
                     virtualFrames = virtualFrames.filter((_, j) => j !== i);
                     rebuildVirtualFrameControls();
-                    updateChart();
+                    updateChart(true);
                 });
                 chip.appendChild(remove);
                 chips.appendChild(chip);
@@ -662,7 +662,7 @@
                 filterContainer.classList.remove('visible');
                 frameFilter = '';
                 filterInput.value = '';
-                updateChart();
+                updateChart(true);
                 updateInterval = setInterval(updateChart, 10000);
                 btn.textContent = 'Pause';
             }
@@ -680,7 +680,7 @@
                 sortFilter.style.display = 'flex';
             }
             document.getElementById('vframe-filter').style.display = viewMode === 'flamegraph' ? 'flex' : 'none';
-            updateChart();
+            updateChart(true);
         }
 
 function applyFrameFilter() {
@@ -822,15 +822,47 @@ function applyFrameFilter() {
             URL.revokeObjectURL(url);
         }
 
-        function updateChart() {
+        // URL and ETag the current view was rendered from.
+        let lastRenderedKey = null;
+
+        // fetchViewData resolves to {data}, or to null if the view is already
+        // rendered from this response and force is not set.
+        function fetchViewData(endpoint, query, force) {
+            const url = window.__BASE_PATH__ + endpoint + query;
+            return fetch(url).then(r => {
+                const etag = r.ok ? r.headers.get('ETag') : null;
+                const key = etag ? url + ' ' + etag : null;
+                if (!force && key !== null && key === lastRenderedKey) {
+                    if (r.body) r.body.cancel().catch(() => {});
+                    return null;
+                }
+                return r.json().then(data => {
+                    lastRenderedKey = key;
+                    return {data};
+                });
+            }).catch(err => {
+                lastRenderedKey = null;
+                throw err;
+            });
+        }
+
+        function markUpdated() {
+            document.getElementById('last-update').textContent =
+                new Date().toLocaleTimeString();
+        }
+
+        // updateChart refreshes the current view. Unless force is set, unchanged
+        // data is not rendered again, which keeps the zoom state.
+        function updateChart(force) {
+            force = force === true;
             const query = toQuery(appendCommonParams(new URLSearchParams()));
 
             if (viewMode === 'heatmap') {
-                fetchAndRenderHeatMap(query);
+                fetchAndRenderHeatMap(query, force);
             } else if (viewMode === 'sandwich') {
-                fetchAndRenderSandwich(query);
+                fetchAndRenderSandwich(query, force);
             } else {
-                fetchAndRenderFlamegraph(query);
+                fetchAndRenderFlamegraph(query, force);
             }
 
             // Profile count / time range
@@ -906,10 +938,11 @@ function applyFrameFilter() {
                 .catch(() => {});
         }
 
-        function fetchAndRenderFlamegraph(query) {
-            fetch(window.__BASE_PATH__ + '/api/flamegraph' + query)
-                .then(r => r.json())
-                .then(graphs => {
+        function fetchAndRenderFlamegraph(query, force) {
+            fetchViewData('/api/flamegraph', query, force)
+                .then(res => {
+                    if (res === null) { markUpdated(); return; }
+                    const graphs = res.data;
                     currentGraphs = graphs;
                     // graphs: [{type, unit, root}, ...]
                     const strip  = document.getElementById('tab-strip');
@@ -980,10 +1013,11 @@ function applyFrameFilter() {
                 new Date().toLocaleTimeString();
         }
 
-        function fetchAndRenderHeatMap(query) {
-            fetch(window.__BASE_PATH__ + '/api/flamescope' + query)
-                .then(r => r.json())
-                .then(hmaps => {
+        function fetchAndRenderHeatMap(query, force) {
+            fetchViewData('/api/flamescope', query, force)
+                .then(res => {
+                    if (res === null) { markUpdated(); return; }
+                    const hmaps = res.data;
                     currentHeatMaps = hmaps;
                     const strip  = document.getElementById('tab-strip');
                     const charts = document.getElementById('charts');
@@ -1187,10 +1221,11 @@ function applyFrameFilter() {
         let selectedFunctionName = null;
         let sandwichGraphMode = 'callers';
 
-        function fetchAndRenderSandwich(query) {
-            fetch(window.__BASE_PATH__ + '/api/sandwich' + query)
-                .then(r => r.json())
-                .then(sandwiches => {
+        function fetchAndRenderSandwich(query, force) {
+            fetchViewData('/api/sandwich', query, force)
+                .then(res => {
+                    if (res === null) { markUpdated(); return; }
+                    const sandwiches = res.data;
                     currentGraphs = sandwiches;
                     const strip  = document.getElementById('tab-strip');
                     const charts = document.getElementById('charts');
@@ -1879,7 +1914,7 @@ function applyFrameFilter() {
                 })
                 .catch(() => {})
                 .finally(() => {
-                    updateChart();
+                    updateChart(true);
                     updateInterval = setInterval(updateChart, 5000);
                 });
             document.getElementById('pause-btn').addEventListener('click', togglePause);
@@ -1891,25 +1926,25 @@ function applyFrameFilter() {
                 selectedAttrValue = '';
                 rebuildValueSelect();
                 applyResourceFilter();
-                updateChart();
+                updateChart(true);
             });
             document.getElementById('resource-value-select').addEventListener('change', (e) => {
                 selectedAttrValue = e.target.value;
                 applyResourceFilter();
-                updateChart();
+                updateChart(true);
             });
             document.getElementById('vframe-add-select').addEventListener('change', (e) => {
                 const key = e.target.value;
                 if (!key) return;
                 virtualFrames = [...virtualFrames, key];
                 rebuildVirtualFrameControls();
-                updateChart();
+                updateChart(true);
             });
             document.getElementById('frame-filter').addEventListener('input', applyFrameFilter);
             document.getElementById('export-btn').addEventListener('click', exportCurrentGraph);
             document.getElementById('sort-select').addEventListener('change', (e) => {
                 sortMode = e.target.value;
-                if (viewMode === 'flamegraph') updateChart();
+                if (viewMode === 'flamegraph') updateChart(true);
             });
         }
 
