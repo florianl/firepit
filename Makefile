@@ -1,4 +1,4 @@
-.PHONY: build clean fmt lint test fuzz vulncheck generate docker-build docker-run docker-clean
+.PHONY: build clean fmt lint test test-web fuzz vulncheck generate docker-build docker-run docker-clean
 
 WEB_DIR := cmd/firepit/web
 D3_JS := $(WEB_DIR)/d3.v7.min.js
@@ -35,6 +35,10 @@ lint:
 test:
 	go clean -testcache
 	go test ./...
+
+# Unit tests of the web UI helpers. Requires Node.js 20 or later.
+test-web:
+	node --test cmd/firepit/web_test/
 
 # FUZZTIME is the duration per fuzz target.
 FUZZTIME ?= 30s
