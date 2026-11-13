@@ -125,8 +125,22 @@ type staticFile struct {
 	gzipped []byte
 }
 
+// staticTypes pins the content types of the web UI's own files, since
+// mime.TypeByExtension consults the host's MIME database and varies by system.
+var staticTypes = map[string]string{
+	".html": "text/html; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".js":   "text/javascript; charset=utf-8",
+	".json": "application/json",
+	".svg":  "image/svg+xml",
+}
+
 func newStaticFile(name string, raw []byte) (*staticFile, error) {
-	contentType := mime.TypeByExtension(path.Ext(name))
+	ext := path.Ext(name)
+	contentType, ok := staticTypes[ext]
+	if !ok {
+		contentType = mime.TypeByExtension(ext)
+	}
 	if contentType == "" {
 		contentType = http.DetectContentType(raw)
 	}

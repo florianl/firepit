@@ -37,8 +37,10 @@ test:
 	go test ./...
 
 # Unit tests of the web UI helpers. Requires Node.js 20 or later.
+# List files explicitly as node --test and shells differ in glob handling.
+WEB_TESTS := $(wildcard cmd/firepit/web_test/*.test.js)
 test-web:
-	node --test cmd/firepit/web_test/
+	node --test $(WEB_TESTS)
 
 # FUZZTIME is the duration per fuzz target.
 FUZZTIME ?= 30s
