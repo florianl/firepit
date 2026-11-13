@@ -1,4 +1,4 @@
-.PHONY: build clean fmt lint test vulncheck generate docker-build docker-run docker-clean
+.PHONY: build clean fmt lint test fuzz vulncheck generate docker-build docker-run docker-clean
 
 WEB_DIR := cmd/firepit/web
 D3_JS := $(WEB_DIR)/d3.v7.min.js
@@ -35,6 +35,12 @@ lint:
 test:
 	go clean -testcache
 	go test ./...
+
+# FUZZTIME is the duration per fuzz target.
+FUZZTIME ?= 30s
+fuzz:
+	go test ./internal/profiler -run '^$$' -fuzz FuzzProtobufRequest -fuzztime $(FUZZTIME)
+	go test ./internal/profiler -run '^$$' -fuzz FuzzJSONRequest -fuzztime $(FUZZTIME)
 
 vulncheck:
 	go tool govulncheck ./...
