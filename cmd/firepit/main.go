@@ -25,6 +25,7 @@ import (
 
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/florianl/firepit/internal/profiler"
@@ -301,7 +302,13 @@ func startGRPCServer(st *store.Store, grpcAddr string, wg *sync.WaitGroup) *grpc
 		os.Exit(1)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		// Close connections of peers that went away.
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    defaultTimeouts.idle,
+			Timeout: defaultTimeouts.readHeader,
+		}),
+	)
 	collectorprofiles.RegisterProfilesServiceServer(grpcServer, receiver.New(st))
 
 	slog.Info("gRPC server listening", "addr", grpcAddr)
@@ -312,6 +319,33 @@ func startGRPCServer(st *store.Store, grpcAddr string, wg *sync.WaitGroup) *grpc
 	})
 
 	return grpcServer
+}
+
+// serverTimeouts limits how long a client may hold a connection. A zero value
+// disables the limit.
+type serverTimeouts struct {
+	readHeader time.Duration
+	read       time.Duration
+	write      time.Duration
+	idle       time.Duration
+}
+
+var defaultTimeouts = serverTimeouts{
+	readHeader: 10 * time.Second,
+	read:       time.Minute,
+	write:      time.Minute,
+	idle:       2 * time.Minute,
+}
+
+func newHTTPServer(addr string, handler http.Handler, timeouts serverTimeouts) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: timeouts.readHeader,
+		ReadTimeout:       timeouts.read,
+		WriteTimeout:      timeouts.write,
+		IdleTimeout:       timeouts.idle,
+	}
 }
 
 func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
@@ -376,10 +410,10 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 func startWebUIServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.Server {
 	mux := buildWebUIMux(st, cfg)
 
-	server := &http.Server{
-		Addr:    cfg.WebAddr,
-		Handler: mux,
-	}
+	// Runtime profiling endpoints stream for as long as the client asks for.
+	timeouts := defaultTimeouts
+	timeouts.write = 0
+	server := newHTTPServer(cfg.WebAddr, mux, timeouts)
 
 	slog.Info("Web UI listening", "addr", cfg.WebAddr)
 	slog.Info("Open browser to", "url", "http://localhost"+cfg.WebAddr+cfg.BasePath)
@@ -397,10 +431,7 @@ func startOTLPHTTPServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/profiles", receiver.NewHTTPHandler(st, cfg.MaxBodySize))
 
-	server := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: mux,
-	}
+	server := newHTTPServer(cfg.HTTPAddr, mux, defaultTimeouts)
 
 	slog.Info("OTLP HTTP server listening", "addr", cfg.HTTPAddr)
 
