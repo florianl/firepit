@@ -356,11 +356,15 @@ func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
 	return mux
 }
 
-// buildWebUI returns the web UI handler and a function to end its event streams.
+// buildWebUI returns the web UI handler and a function to release its resources.
 func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.ServeMux, func()) {
 	mux := http.NewServeMux()
 	done := make(chan struct{})
-	stop := sync.OnceFunc(func() { close(done) })
+	agg := profiler.NewAggregator(st)
+	stop := sync.OnceFunc(func() {
+		close(done)
+		agg.Close()
+	})
 	base := cfg.BasePath
 
 	fsub, err := fs.Sub(webFS, "web")
@@ -388,10 +392,10 @@ func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.S
 
 	// Cache uncompressed responses and compress per request
 	cache := newResponseCache(st)
-	mux.HandleFunc(base+"/api/flamegraph", compressResponse(cache.wrap(handleFlamegraph(st, cfg.VirtualFrames))))
+	mux.HandleFunc(base+"/api/flamegraph", compressResponse(cache.wrap(handleFlamegraph(st, agg, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/flamescope", compressResponse(cache.wrap(handleFlamescope(st))))
-	mux.HandleFunc(base+"/api/sandwich", compressResponse(cache.wrap(handleSandwich(st, cfg.VirtualFrames))))
-	mux.HandleFunc(base+"/api/sandwich-detail", compressResponse(cache.wrap(handleSandwichDetail(st, cfg.VirtualFrames))))
+	mux.HandleFunc(base+"/api/sandwich", compressResponse(cache.wrap(handleSandwich(st, agg, cfg.VirtualFrames))))
+	mux.HandleFunc(base+"/api/sandwich-detail", compressResponse(cache.wrap(handleSandwichDetail(st, agg, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/profiles", compressResponse(cache.wrap(handleProfiles(st))))
 	mux.HandleFunc(base+"/api/resource-types", compressResponse(cache.wrap(handleResourceTypes(st))))
 	mux.HandleFunc(base+"/api/resource-attributes", compressResponse(cache.wrap(handleResourceAttributes(st))))
@@ -475,7 +479,40 @@ func flamegraphOptions(r *http.Request, defaultVirtualFrames []string) profiler.
 	return profiler.Options{VirtualFrameKeys: keys}
 }
 
-func handleFlamegraph(st *store.Store, defaultVirtualFrames []string) http.HandlerFunc {
+// namedJSON pairs a sample type with data that is already encoded as JSON.
+type namedJSON struct {
+	sampleType string
+	data       json.RawMessage
+}
+
+// writeNamedJSON writes items as a JSON array of {"type", field} objects.
+// The data is written as is, as encoding/json would validate it once more.
+func writeNamedJSON(w http.ResponseWriter, field string, items []namedJSON) {
+	var buf bytes.Buffer
+	buf.WriteByte('[')
+	for i, item := range items {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		sampleType, _ := json.Marshal(item.sampleType)
+		buf.WriteString(`{"type":`)
+		buf.Write(sampleType)
+		buf.WriteString(`,"` + field + `":`)
+		buf.Write(item.data)
+		buf.WriteByte('}')
+	}
+	buf.WriteString("]\n")
+	w.Write(buf.Bytes())
+}
+
+// writeEncodingError reports that a response could not be encoded.
+func writeEncodingError(w http.ResponseWriter, err error) {
+	slog.Error("Failed to encode response", "error", err)
+	w.WriteHeader(http.StatusInternalServerError)
+	json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
+}
+
+func handleFlamegraph(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -489,15 +526,17 @@ func handleFlamegraph(st *store.Store, defaultVirtualFrames []string) http.Handl
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		types := st.SampleTypes()
-		graphs := make([]profiler.NamedFlamegraph, 0, len(types))
+		graphs := make([]namedJSON, 0, len(types))
 		for _, t := range types {
-			entries := st.ProfileEntries(t)
-			entries = profiler.FilterByResource(entries, filters)
-			root := profiler.ToFlamegraph(entries, opts)
-			graphs = append(graphs, profiler.NamedFlamegraph{Type: t, Root: root})
+			root, err := agg.FlamegraphJSON(t, filters, opts)
+			if err != nil {
+				writeEncodingError(w, err)
+				return
+			}
+			graphs = append(graphs, namedJSON{t, root})
 		}
 
-		json.NewEncoder(w).Encode(graphs)
+		writeNamedJSON(w, "root", graphs)
 	}
 }
 
@@ -636,7 +675,7 @@ func handleConfig(cfg Config) http.HandlerFunc {
 	}
 }
 
-func handleSandwich(st *store.Store, defaultVirtualFrames []string) http.HandlerFunc {
+func handleSandwich(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -650,24 +689,26 @@ func handleSandwich(st *store.Store, defaultVirtualFrames []string) http.Handler
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		types := st.SampleTypes()
-		sandwiches := make([]profiler.NamedSandwich, 0, len(types))
+		sandwiches := make([]namedJSON, 0, len(types))
 		for _, t := range types {
-			entries := st.ProfileEntries(t)
-			entries = profiler.FilterByResource(entries, filters)
-			root := profiler.ToFlamegraph(entries, opts)
-			data := profiler.ToSandwich(root)
-			sandwiches = append(sandwiches, profiler.NamedSandwich{Type: t, Data: data})
+			var data json.RawMessage
+			var err error
+			// root is only valid within the callback.
+			agg.WithFlamegraph(t, filters, opts, func(root *profiler.FlameNode) {
+				data, err = json.Marshal(profiler.ToSandwich(root))
+			})
+			if err != nil {
+				writeEncodingError(w, err)
+				return
+			}
+			sandwiches = append(sandwiches, namedJSON{t, data})
 		}
 
-		if err := json.NewEncoder(w).Encode(sandwiches); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
-			return
-		}
+		writeNamedJSON(w, "data", sandwiches)
 	}
 }
 
-func handleSandwichDetail(st *store.Store, defaultVirtualFrames []string) http.HandlerFunc {
+func handleSandwichDetail(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -696,10 +737,10 @@ func handleSandwichDetail(st *store.Store, defaultVirtualFrames []string) http.H
 		result := make(map[string]any)
 		foundInAnyType := false
 		for _, t := range types {
-			entries := st.ProfileEntries(t)
-			entries = profiler.FilterByResource(entries, filters)
-			root := profiler.ToFlamegraph(entries, opts)
-			sandwich := profiler.ExtractSandwichGraphs(root, functionName)
+			var sandwich *profiler.SandwichGraphs
+			agg.WithFlamegraph(t, filters, opts, func(root *profiler.FlameNode) {
+				sandwich = profiler.ExtractSandwichGraphs(root, functionName)
+			})
 			result[t] = sandwich
 			if sandwich.Callers != nil || sandwich.Callees != nil {
 				foundInAnyType = true

@@ -65,7 +65,7 @@ func TestResponseCache(t *testing.T) {
 	addTestProfiles(st, 1)
 
 	var calls atomic.Int32
-	inner := handleFlamegraph(st, nil)
+	inner := handleFlamegraph(st, newTestAggregator(t, st), nil)
 	handler := newResponseCache(st).wrap(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		inner(w, r)
@@ -151,7 +151,7 @@ func TestResponseCacheErrorsAndMethods(t *testing.T) {
 	// Error responses keep their status and are not tagged.
 	req := httptest.NewRequest(http.MethodGet, "/api/sandwich-detail", nil)
 	w := httptest.NewRecorder()
-	cache.wrap(handleSandwichDetail(st, nil))(w, req)
+	cache.wrap(handleSandwichDetail(st, newTestAggregator(t, st), nil))(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
@@ -162,7 +162,7 @@ func TestResponseCacheErrorsAndMethods(t *testing.T) {
 	// Other methods are passed through.
 	req = httptest.NewRequest(http.MethodPost, "/api/flamegraph", nil)
 	w = httptest.NewRecorder()
-	cache.wrap(handleFlamegraph(st, nil))(w, req)
+	cache.wrap(handleFlamegraph(st, newTestAggregator(t, st), nil))(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", w.Code)
 	}
@@ -174,7 +174,7 @@ func TestResponseCacheConcurrent(t *testing.T) {
 	addTestProfiles(st, 1)
 
 	var calls atomic.Int32
-	inner := handleFlamegraph(st, nil)
+	inner := handleFlamegraph(st, newTestAggregator(t, st), nil)
 	handler := newResponseCache(st).wrap(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		inner(w, r)
@@ -231,13 +231,13 @@ func BenchmarkPollFlamegraph(b *testing.B) {
 	}
 
 	b.Run("uncached", func(b *testing.B) {
-		poll(b, handleFlamegraph(st, nil), "")
+		poll(b, handleFlamegraph(st, newTestAggregator(b, st), nil), "")
 	})
 	b.Run("cached", func(b *testing.B) {
-		poll(b, newResponseCache(st).wrap(handleFlamegraph(st, nil)), "")
+		poll(b, newResponseCache(st).wrap(handleFlamegraph(st, newTestAggregator(b, st), nil)), "")
 	})
 	b.Run("revalidated", func(b *testing.B) {
-		handler := newResponseCache(st).wrap(handleFlamegraph(st, nil))
+		handler := newResponseCache(st).wrap(handleFlamegraph(st, newTestAggregator(b, st), nil))
 		w := httptest.NewRecorder()
 		handler(w, httptest.NewRequest(http.MethodGet, "/api/flamegraph", nil))
 		poll(b, handler, w.Header().Get("ETag"))

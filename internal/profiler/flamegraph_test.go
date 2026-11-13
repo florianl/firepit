@@ -680,7 +680,7 @@ func TestFlameNodeManyChildren(t *testing.T) {
 	root := &FlameNode{Name: "root"}
 	for round := range 2 {
 		for i := range 4 * childrenMapThreshold {
-			insertFrame(root, FrameInfo{Name: "f" + strconv.Itoa(i)}, 1)
+			insertFrame(root, FrameInfo{Name: "f" + strconv.Itoa(i)}, 1, 1)
 		}
 		if len(root.Children) != 4*childrenMapThreshold {
 			t.Fatalf("round %d: %d children, want %d", round, len(root.Children), 4*childrenMapThreshold)

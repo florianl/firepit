@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/florianl/firepit/internal/profiler"
 	"github.com/florianl/firepit/internal/store"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
@@ -279,7 +280,7 @@ func TestHandleFlamegraph(t *testing.T) {
 	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
 	defer st.Close()
 
-	handler := handleFlamegraph(st, nil)
+	handler := handleFlamegraph(st, newTestAggregator(t, st), nil)
 
 	tests := []struct {
 		name       string
@@ -648,7 +649,7 @@ func TestHandleFlamegraphResourceFilters(t *testing.T) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
 	addFilterTestProfiles(st)
-	handler := handleFlamegraph(st, nil)
+	handler := handleFlamegraph(st, newTestAggregator(t, st), nil)
 
 	tests := []struct {
 		query string
@@ -713,5 +714,139 @@ func TestHandleResourceAttributes(t *testing.T) {
 	handler(w, httptest.NewRequest(http.MethodPost, "/api/resource-attributes", nil))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST: status = %d, want 405", w.Code)
+	}
+}
+
+// newTestAggregator returns an Aggregator for st that is closed with the test.
+func newTestAggregator(t testing.TB, st *store.Store) *profiler.Aggregator {
+	t.Helper()
+	agg := profiler.NewAggregator(st)
+	t.Cleanup(agg.Close)
+	return agg
+}
+
+// Aggregated handlers must match flame graphs built from scratch.
+func TestAggregatedHandlersMatchProfiler(t *testing.T) {
+	st := store.New(5*time.Minute, time.Hour, 0)
+	defer st.Close()
+	mux := buildWebUIMux(st, Config{})
+
+	get := func(path string, v any) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d: %s", path, w.Code, w.Body.String())
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("GET %s: Content-Type = %q", path, ct)
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), v); err != nil {
+			t.Fatalf("GET %s: invalid JSON: %v\n%s", path, err, w.Body.String())
+		}
+	}
+	// normalize sorts children by name.
+	var normalize func(n *profiler.FlameNode) *profiler.FlameNode
+	normalize = func(n *profiler.FlameNode) *profiler.FlameNode {
+		slices.SortFunc(n.Children, func(a, b *profiler.FlameNode) int { return strings.Compare(a.Name, b.Name) })
+		for _, child := range n.Children {
+			normalize(child)
+		}
+		return n
+	}
+	encode := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	// An empty store has no sample types.
+	var empty []any
+	get("/api/flamegraph", &empty)
+	if len(empty) != 0 {
+		t.Errorf("flame graphs of an empty store: %v", empty)
+	}
+
+	for round := range 3 {
+		addTestProfiles(st, 2)
+
+		for _, query := range []string{"", "?virtualFrames=service.name", "?resourceType=service.name:none"} {
+			opts := profiler.Options{}
+			if strings.Contains(query, "virtualFrames") {
+				opts.VirtualFrameKeys = []string{"service.name"}
+			}
+			filter := ""
+			if strings.Contains(query, "resourceType") {
+				filter = "service.name:none"
+			}
+			want := profiler.ToFlamegraph(profiler.FilterByResourceType(st.ProfileEntries("samples(count)"), filter), opts)
+
+			var graphs []profiler.NamedFlamegraph
+			get("/api/flamegraph"+query, &graphs)
+			if len(graphs) != 1 || graphs[0].Type != "samples(count)" {
+				t.Fatalf("round %d, %q: unexpected flame graphs %+v", round, query, graphs)
+			}
+			if got := encode(normalize(graphs[0].Root)); got != encode(normalize(want)) {
+				t.Errorf("round %d, %q: flame graph differs from the one built from scratch", round, query)
+			}
+
+			var sandwiches []profiler.NamedSandwich
+			get("/api/sandwich"+query, &sandwiches)
+			wantSandwich := profiler.ToSandwich(want)
+			if len(sandwiches) != 1 || sandwiches[0].Type != "samples(count)" {
+				t.Fatalf("round %d, %q: unexpected sandwiches %+v", round, query, sandwiches)
+			}
+			if got, want := encode(sandwiches[0].Data.Functions), encode(wantSandwich.Functions); got != want {
+				t.Errorf("round %d, %q: sandwich functions differ:\n got %s\nwant %s", round, query, got, want)
+			}
+
+			if len(wantSandwich.Functions) == 0 {
+				continue
+			}
+			fn := wantSandwich.Functions[0].Name
+			sep := "?"
+			if query != "" {
+				sep = "&"
+			}
+			var detail map[string]*profiler.SandwichGraphs
+			get("/api/sandwich-detail"+query+sep+"functionName="+fn, &detail)
+			wantDetail := profiler.ExtractSandwichGraphs(want, fn)
+			got := detail["samples(count)"]
+			if got == nil || got.Callers == nil || got.Callees == nil {
+				t.Fatalf("round %d, %q: no sandwich detail for %s: %+v", round, query, fn, detail)
+			}
+			if encode(normalize(got.Callers)) != encode(normalize(wantDetail.Callers)) ||
+				encode(normalize(got.Callees)) != encode(normalize(wantDetail.Callees)) {
+				t.Errorf("round %d, %q: sandwich detail of %s differs", round, query, fn)
+			}
+		}
+	}
+}
+
+func TestWriteNamedJSON(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeNamedJSON(w, "root", []namedJSON{
+		{`alloc "space" <bytes>`, json.RawMessage(`{"name":"root","value":1}`)},
+		{"cpu", json.RawMessage(`{"name":"root","value":2}`)},
+	})
+	var got []struct {
+		Type string `json:"type"`
+		Root struct {
+			Value int `json:"value"`
+		} `json:"root"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, w.Body.String())
+	}
+	if len(got) != 2 || got[0].Type != `alloc "space" <bytes>` || got[0].Root.Value != 1 || got[1].Type != "cpu" || got[1].Root.Value != 2 {
+		t.Errorf("got %+v", got)
+	}
+
+	w = httptest.NewRecorder()
+	writeNamedJSON(w, "root", nil)
+	if got := strings.TrimSpace(w.Body.String()); got != "[]" {
+		t.Errorf("no items: %s, want []", got)
 	}
 }
