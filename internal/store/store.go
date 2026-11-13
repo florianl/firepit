@@ -8,10 +8,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
-	"google.golang.org/protobuf/proto"
 )
 
 type ProfileEntry struct {
@@ -145,8 +145,16 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	st := dictionary.StringTable
 	seenResourceTypes := make(map[string]bool)
 	seenAttributeKeys := make(map[string]bool)
-	// Computed on first use.
-	dictSize := -1
+
+	// Shared data is accounted in equal shares to the profiles using it.
+	numProfiles := 0
+	for _, rp := range resourceProfiles {
+		numProfiles += countProfiles(rp)
+	}
+	var dictShare int64
+	if numProfiles > 0 {
+		dictShare = dictionarySize(dictionary) / int64(numProfiles)
+	}
 
 	for _, rp := range resourceProfiles {
 		if rp == nil {
@@ -154,6 +162,10 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 		}
 
 		var resAttrs []*commonpb.KeyValue
+		var resShare int64
+		if n := countProfiles(rp); n > 0 {
+			resShare = resourceSize(rp.Resource) / int64(n)
+		}
 		if rp.Resource != nil {
 			resAttrs = rp.Resource.Attributes
 		}
@@ -190,19 +202,16 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 					seenAttributeKeys[k] = true
 				}
 
-				if dictSize < 0 {
-					dictSize = proto.Size(dictionary)
-				}
-
-				newEntries = append(newEntries, newEntry{key, ProfileEntry{
+				entry := ProfileEntry{
 					CreatedAt:           time.Unix(0, int64(profile.TimeUnixNano)),
 					Profile:             profile,
 					Dictionary:          dictionary,
 					ResourceAttributes:  resAttrs,
 					SampleAttributeKeys: sampleKeys,
-					// Include the size of the dictionary proportionally
-					Size: int64(proto.Size(profile) + dictSize/len(sp.Profiles)),
-				}})
+				}
+				entry.Size = int64(unsafe.Sizeof(entry)) + stringsSize(sampleKeys) +
+					profileSize(profile) + dictShare + resShare
+				newEntries = append(newEntries, newEntry{key, entry})
 				stored = true
 			}
 		}
@@ -250,6 +259,19 @@ func mergeSorted(sorted []string, seen map[string]bool) []string {
 	merged = append(append(merged, sorted...), missing...)
 	slices.Sort(merged)
 	return merged
+}
+
+// countProfiles returns the number of non-nil profiles in rp.
+func countProfiles(rp *profilespb.ResourceProfiles) int {
+	n := 0
+	for _, sp := range rp.GetScopeProfiles() {
+		for _, profile := range sp.GetProfiles() {
+			if profile != nil {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func (s *Store) SampleTypes() []string {
