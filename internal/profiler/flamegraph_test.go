@@ -2,6 +2,7 @@ package profiler
 
 import (
 	"slices"
+	"strconv"
 	"testing"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -602,5 +603,92 @@ func TestExtractSandwichGraphsMergesVirtualFrameGroups(t *testing.T) {
 	}
 	if main.Children[0].Value != 3 || main.Children[1].Value != 5 {
 		t.Fatalf("unexpected thread values %d/%d", main.Children[0].Value, main.Children[1].Value)
+	}
+}
+
+// resolverFixture returns a profile with one sample per value of the stack
+// main -> outer -> inlined, where inlined is inlined into outer.
+func resolverFixture(prefix string, values ...int64) store.ProfileEntry {
+	dict := &profilespb.ProfilesDictionary{
+		StringTable: []string{"", prefix + "main", prefix + "outer", prefix + "inlined"},
+		FunctionTable: []*profilespb.Function{
+			{},
+			{NameStrindex: 1},
+			{NameStrindex: 2},
+			{NameStrindex: 3},
+		},
+		LocationTable: []*profilespb.Location{
+			{},
+			{Lines: []*profilespb.Line{{FunctionIndex: 1}}},
+			// Lines are leaf-first
+			{Lines: []*profilespb.Line{{FunctionIndex: 3}, {FunctionIndex: 2}}},
+		},
+		StackTable: []*profilespb.Stack{
+			{},
+			{LocationIndices: []int32{2, 1}},
+		},
+	}
+	profile := &profilespb.Profile{}
+	for _, v := range values {
+		profile.Samples = append(profile.Samples, &profilespb.Sample{StackIndex: 1, Values: []int64{v}})
+	}
+	return store.ProfileEntry{Profile: profile, Dictionary: dict}
+}
+
+func flamePath(n *FlameNode) []string {
+	var path []string
+	for len(n.Children) == 1 {
+		n = n.Children[0]
+		path = append(path, n.Name)
+	}
+	return path
+}
+
+func TestToFlamegraphInlinedFramesOrder(t *testing.T) {
+	root := ToFlamegraph([]store.ProfileEntry{resolverFixture("", 1, 2)}, Options{})
+	if got, want := flamePath(root), []string{"main", "outer", "inlined"}; !slices.Equal(got, want) {
+		t.Errorf("path = %v, want %v", got, want)
+	}
+	if root.Value != 3 {
+		t.Errorf("root value = %d, want 3", root.Value)
+	}
+}
+
+// Stacks cached for one dictionary must not leak into another.
+func TestToFlamegraphDictionaryChange(t *testing.T) {
+	a := resolverFixture("a.", 1)
+	a2 := store.ProfileEntry{Profile: a.Profile, Dictionary: a.Dictionary}
+	b := resolverFixture("b.", 5)
+	// Sample stack index out of range
+	c := resolverFixture("c.", 7)
+	c.Dictionary.StackTable = c.Dictionary.StackTable[:1]
+
+	root := ToFlamegraph([]store.ProfileEntry{a, a2, b, c, a}, Options{})
+	if root.Value != 8 {
+		t.Errorf("root value = %d, want 8", root.Value)
+	}
+	got := map[string]int64{}
+	for _, child := range root.Children {
+		got[child.Name] = child.Value
+	}
+	if len(got) != 2 || got["a.main"] != 3 || got["b.main"] != 5 {
+		t.Errorf("children = %v, want a.main=3 b.main=5", got)
+	}
+}
+
+func TestFlameNodeManyChildren(t *testing.T) {
+	root := &FlameNode{Name: "root"}
+	for round := range 2 {
+		for i := range 4 * childrenMapThreshold {
+			insertFrame(root, FrameInfo{Name: "f" + strconv.Itoa(i)}, 1)
+		}
+		if len(root.Children) != 4*childrenMapThreshold {
+			t.Fatalf("round %d: %d children, want %d", round, len(root.Children), 4*childrenMapThreshold)
+		}
+	}
+	for _, child := range root.Children {
+		if child.Value != 2 {
+			t.Errorf("%s value = %d, want 2", child.Name, child.Value)
+		}
 	}
 }
