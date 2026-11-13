@@ -641,8 +641,28 @@
             return qs ? '?' + qs : '';
         }
 
+        // sanitizeId returns str with all characters not valid in an element id replaced.
         function sanitizeId(str) {
-            return str.replace(/[()]/g, '_');
+            return String(str).replace(/[^A-Za-z0-9_-]/g, '_');
+        }
+
+        // messageElement returns a div with the given class and text. Profile
+        // data is untrusted and must not be parsed as HTML.
+        function messageElement(className, text) {
+            const el = document.createElement('div');
+            el.className = className;
+            el.textContent = text;
+            return el;
+        }
+
+        // errorElement returns a status box showing err.
+        function errorElement(err) {
+            const el = document.createElement('div');
+            el.className = 'status-box';
+            const label = document.createElement('strong');
+            label.textContent = 'Error:';
+            el.append(label, ' ' + (err && err.message ? err.message : String(err)));
+            return el;
         }
 
         function togglePause() {
@@ -773,7 +793,8 @@ function applyFrameFilter() {
                     return color || originalColor;
                 });
 
-            const selection = d3.select('#' + containerId);
+            // The id is not guaranteed to be a valid CSS selector.
+            const selection = d3.select(container);
             selection.datum(data).call(fg);
 
             // Reapply frame filter if one is active
@@ -996,8 +1017,7 @@ function applyFrameFilter() {
                         if (hasData(g.root)) {
                             setTimeout(() => renderFlamegraph(panelId, g.root), 0);
                         } else {
-                            panel.innerHTML = '<div class="waiting">No data for ' +
-                                              g.type + '</div>';
+                            panel.replaceChildren(messageElement('waiting', 'No data for ' + g.type));
                         }
                     });
 
@@ -1005,8 +1025,7 @@ function applyFrameFilter() {
                         new Date().toLocaleTimeString();
                 })
                 .catch(err => {
-                    document.getElementById('charts').innerHTML =
-                        '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                    document.getElementById('charts').replaceChildren(errorElement(err));
                 });
 
             document.getElementById('last-update').textContent =
@@ -1060,8 +1079,7 @@ function applyFrameFilter() {
                         new Date().toLocaleTimeString();
                 })
                 .catch(err => {
-                    document.getElementById('charts').innerHTML =
-                        '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                    document.getElementById('charts').replaceChildren(errorElement(err));
                 });
         }
 
@@ -1069,7 +1087,7 @@ function applyFrameFilter() {
             const charts = document.getElementById('charts');
             const entry = (currentHeatMaps || []).find(h => h.type === type);
             if (!entry || !entry.data || entry.data.numSeconds === 0) {
-                charts.innerHTML = '<div class="waiting">No heatmap data for ' + type + '</div>';
+                charts.replaceChildren(messageElement('waiting', 'No heatmap data for ' + type));
                 return;
             }
             renderHeatMap(charts, entry.data);
@@ -1276,7 +1294,7 @@ function applyFrameFilter() {
                         if (s.data && s.data.functions && s.data.functions.length > 0) {
                             setTimeout(() => renderSandwichView(panelId, s.data), 0);
                         } else {
-                            panel.innerHTML = '<div class="waiting">No data for ' + s.type + '</div>';
+                            panel.replaceChildren(messageElement('waiting', 'No data for ' + s.type));
                         }
                     });
 
@@ -1284,8 +1302,7 @@ function applyFrameFilter() {
                         new Date().toLocaleTimeString();
                 })
                 .catch(err => {
-                    document.getElementById('charts').innerHTML =
-                        '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                    document.getElementById('charts').replaceChildren(errorElement(err));
                 });
         }
 
@@ -1338,7 +1355,7 @@ function applyFrameFilter() {
                     }
                 })
                 .catch(err => {
-                    rightPanel.innerHTML = '<div class="status-box"><strong>Error:</strong> ' + err.message + '</div>';
+                    rightPanel.replaceChildren(errorElement(err));
                 });
         }
 
@@ -1776,8 +1793,12 @@ function applyFrameFilter() {
                 tooltip.style('display', 'block')
                     .style('left', (event.pageX + 12) + 'px')
                     .style('top', (event.pageY - 28) + 'px')
-                    .html(`<strong>${d.name}</strong><br/>` +
-                          (d.value ? `Samples: ${Math.round(d.value)}` : ''));
+                    .html(null);
+                tooltip.append('strong').text(d.name);
+                if (d.value) {
+                    tooltip.append('br');
+                    tooltip.append('span').text('Samples: ' + Math.round(d.value));
+                }
             })
             .on('mouseleave', () => {
                 tooltip.style('display', 'none');

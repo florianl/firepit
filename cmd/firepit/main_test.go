@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -577,5 +579,34 @@ func TestHandleAttributeKeys(t *testing.T) {
 	handler(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", w.Code)
+	}
+}
+
+// TestWebUIDoesNotBuildHTMLFromData checks that the web UI assigns only
+// constant strings as HTML, as profile data is untrusted.
+func TestWebUIDoesNotBuildHTMLFromData(t *testing.T) {
+	index, err := webFS.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unsafe := []*regexp.Regexp{
+		regexp.MustCompile(`\b(innerHTML|outerHTML)\s*\+?=\s*[^;]*(\+|\$\{)`),
+		regexp.MustCompile(`\b(innerHTML|outerHTML)\s*\+?=\s*[^'"\s]`),
+		regexp.MustCompile(`\.insertAdjacentHTML\(`),
+		regexp.MustCompile(`\.html\(\s*[^)\s]`),
+		regexp.MustCompile(`document\.write\(`),
+	}
+	allowed := regexp.MustCompile(`\.html\(null\)`)
+
+	// Split by statement as they may span multiple lines.
+	statements := strings.Split(string(index), ";")
+	for _, stmt := range statements {
+		stmt = allowed.ReplaceAllString(stmt, "")
+		for _, re := range unsafe {
+			if m := re.FindString(stmt); m != "" {
+				t.Errorf("web UI builds HTML dynamically: %q", strings.Join(strings.Fields(m), " "))
+			}
+		}
 	}
 }
