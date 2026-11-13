@@ -2,10 +2,12 @@ package receiver
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -240,5 +242,74 @@ func TestHTTPHandlerOptions(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("Expected status 405, got %d", w.Code)
+	}
+}
+
+func gzipBytes(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestHTTPHandlerContentEncoding(t *testing.T) {
+	body, err := protojson.Marshal(&collectorprofiles.ExportProfilesServiceRequest{
+		ResourceProfiles: []*profilespb.ResourceProfiles{{
+			ScopeProfiles: []*profilespb.ScopeProfiles{{
+				Profiles: []*profilespb.Profile{{TimeUnixNano: uint64(time.Now().UnixNano())}},
+			}},
+		}},
+		Dictionary: &profilespb.ProfilesDictionary{StringTable: []string{"", strings.Repeat("x", 4096)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipped := gzipBytes(t, body)
+	if len(zipped) >= len(body)/2 {
+		t.Fatalf("test body does not compress: %d -> %d bytes", len(body), len(zipped))
+	}
+
+	tests := []struct {
+		name        string
+		encoding    string
+		body        []byte
+		maxBodySize int64
+		wantStatus  int
+		wantStored  int
+	}{
+		{"gzip", "gzip", zipped, 1 << 20, http.StatusOK, 1},
+		{"identity", "identity", body, 1 << 20, http.StatusOK, 1},
+		{"gzip header with plain body", "gzip", body, 1 << 20, http.StatusBadRequest, 0},
+		{"truncated gzip", "gzip", zipped[:len(zipped)/2], 1 << 20, http.StatusBadRequest, 0},
+		{"unsupported encoding", "br", body, 1 << 20, http.StatusUnsupportedMediaType, 0},
+		// Compressed body is below the limit, decompressed is not
+		{"decompressed body too large", "gzip", zipped, int64(len(body) - 1), http.StatusRequestEntityTooLarge, 0},
+		{"decompressed body at limit", "gzip", zipped, int64(len(body)), http.StatusOK, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := store.New(10*time.Minute, time.Hour, 0)
+			defer st.Close()
+			handler := NewHTTPHandler(st, tt.maxBodySize)
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/profiles", bytes.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Encoding", tt.encoding)
+			w := httptest.NewRecorder()
+			handler(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d: %s", w.Code, tt.wantStatus, w.Body.String())
+			}
+			if count, _, _, _ := st.Stats(); count != tt.wantStored {
+				t.Errorf("%d profiles stored, want %d", count, tt.wantStored)
+			}
+		})
 	}
 }
