@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/florianl/firepit/internal/store"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
+	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -608,5 +611,107 @@ func TestWebUIDoesNotBuildHTMLFromData(t *testing.T) {
 				t.Errorf("web UI builds HTML dynamically: %q", strings.Join(strings.Fields(m), " "))
 			}
 		}
+	}
+}
+
+// addFilterTestProfiles stores three profiles, each sampling a distinct function.
+func addFilterTestProfiles(st *store.Store) {
+	dict := &profilespb.ProfilesDictionary{
+		StringTable:   []string{"", "samples", "api-1", "api-2", "db-3"},
+		FunctionTable: []*profilespb.Function{{}, {NameStrindex: 2}, {NameStrindex: 3}, {NameStrindex: 4}},
+		LocationTable: []*profilespb.Location{
+			{},
+			{Lines: []*profilespb.Line{{FunctionIndex: 1}}},
+			{Lines: []*profilespb.Line{{FunctionIndex: 2}}},
+			{Lines: []*profilespb.Line{{FunctionIndex: 3}}},
+		},
+		StackTable: []*profilespb.Stack{{}, {LocationIndices: []int32{1}}, {LocationIndices: []int32{2}}, {LocationIndices: []int32{3}}},
+	}
+	var rps []*profilespb.ResourceProfiles
+	for i, service := range []string{"api", "api", "db"} {
+		rps = append(rps, &profilespb.ResourceProfiles{
+			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+				{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: service}}},
+				{Key: "process.pid", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: int64(i + 1)}}},
+			}},
+			ScopeProfiles: []*profilespb.ScopeProfiles{{Profiles: []*profilespb.Profile{{
+				SampleType:   &profilespb.ValueType{TypeStrindex: 1},
+				TimeUnixNano: uint64(time.Now().UnixNano()),
+				Samples:      []*profilespb.Sample{{StackIndex: int32(i + 1), Values: []int64{1}}},
+			}}}},
+		})
+	}
+	st.Add(rps, dict)
+}
+
+func TestHandleFlamegraphResourceFilters(t *testing.T) {
+	st := store.New(5*time.Minute, time.Hour, 0)
+	defer st.Close()
+	addFilterTestProfiles(st)
+	handler := handleFlamegraph(st, nil)
+
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{"api-1", "api-2", "db-3"}},
+		{"?resourceType=service.name:api", []string{"api-1", "api-2"}},
+		{"?resourceType=process.pid:3", []string{"db-3"}},
+		{"?resourceType=service.name:api&resourceType=process.pid:2", []string{"api-2"}},
+		{"?resourceType=service.name:db&resourceType=process.pid:2", nil},
+	}
+	for _, tt := range tests {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(http.MethodGet, "/api/flamegraph"+tt.query, nil))
+
+		var graphs []struct {
+			Root struct {
+				Children []struct {
+					Name string `json:"name"`
+				} `json:"children"`
+			} `json:"root"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &graphs); err != nil || len(graphs) != 1 {
+			t.Fatalf("%q: unexpected response %s: %v", tt.query, w.Body.String(), err)
+		}
+		var got []string
+		for _, child := range graphs[0].Root.Children {
+			got = append(got, child.Name)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("%q: functions = %v, want %v", tt.query, got, tt.want)
+		}
+	}
+}
+
+func TestHandleResourceAttributes(t *testing.T) {
+	st := store.New(5*time.Minute, time.Hour, 0)
+	defer st.Close()
+	handler := handleResourceAttributes(st)
+
+	get := func() string {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(http.MethodGet, "/api/resource-attributes", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		return strings.TrimSpace(w.Body.String())
+	}
+
+	if got := get(); got != "[]" {
+		t.Errorf("empty store: body = %s, want []", got)
+	}
+
+	addFilterTestProfiles(st)
+	want := `[{"key":"process.pid","values":["1","2","3"]},{"key":"service.name","values":["api","db"]}]`
+	if got := get(); got != want {
+		t.Errorf("body = %s, want %s", got, want)
+	}
+
+	w := httptest.NewRecorder()
+	handler(w, httptest.NewRequest(http.MethodPost, "/api/resource-attributes", nil))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST: status = %d, want 405", w.Code)
 	}
 }

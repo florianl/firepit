@@ -620,3 +620,110 @@ func TestAddResourceWithoutProfiles(t *testing.T) {
 		t.Errorf("ResourceTypes() = %v, want none", got)
 	}
 }
+
+func filterTestAttributes() ([]string, []*commonpb.KeyValue) {
+	st := []string{"", "host.name", "node-1"}
+	str := func(s string) *commonpb.AnyValue {
+		return &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: s}}
+	}
+	return st, []*commonpb.KeyValue{
+		{Key: "service.name", Value: str("api")},
+		{Key: "process.pid", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: 42}}},
+		{Key: "debug", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_BoolValue{BoolValue: true}}},
+		{Key: "load", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_DoubleValue{DoubleValue: 0.5}}},
+		{Key: "k8s:label", Value: str("a:b")},
+		{KeyStrindex: 1, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: 2}}},
+		{Key: "tags", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_ArrayValue{ArrayValue: &commonpb.ArrayValue{Values: []*commonpb.AnyValue{str("x")}}}}},
+		{Key: "empty"},
+	}
+}
+
+func TestMatchResourceFilters(t *testing.T) {
+	st, attrs := filterTestAttributes()
+
+	tests := []struct {
+		filters []string
+		want    bool
+	}{
+		{nil, true},
+		{[]string{"service.name:api"}, true},
+		{[]string{"service.name:db"}, false},
+		{[]string{"service.name:ap"}, false},
+		{[]string{"service.nam:api"}, false},
+		// Non-string scalars
+		{[]string{"process.pid:42"}, true},
+		{[]string{"process.pid:43"}, false},
+		{[]string{"debug:true"}, true},
+		{[]string{"load:0.5"}, true},
+		// Colons in key and value
+		{[]string{"k8s:label:a:b"}, true},
+		{[]string{"k8s:label:a"}, false},
+		// Dictionary references
+		{[]string{"host.name:node-1"}, true},
+		// All filters must match
+		{[]string{"service.name:api", "process.pid:42", "k8s:label:a:b"}, true},
+		{[]string{"service.name:api", "process.pid:43"}, false},
+		{[]string{"service.name:db", "process.pid:42"}, false},
+		// Non-scalar values
+		{[]string{"tags:x"}, false},
+		{[]string{"empty:"}, false},
+		// Filters without a colon are ignored
+		{[]string{"service.name"}, true},
+		{[]string{"", "service.name:api"}, true},
+	}
+	for _, tt := range tests {
+		if got := MatchResourceFilters(st, attrs, tt.filters); got != tt.want {
+			t.Errorf("MatchResourceFilters(%q) = %v, want %v", tt.filters, got, tt.want)
+		}
+	}
+}
+
+func TestResourceAttributes(t *testing.T) {
+	s := New(time.Minute, time.Hour, 0)
+	defer s.Close()
+
+	st, attrs := filterTestAttributes()
+	s.Add([]*profilespb.ResourceProfiles{{
+		Resource: &resourcepb.Resource{Attributes: attrs},
+		ScopeProfiles: []*profilespb.ScopeProfiles{{
+			Profiles: []*profilespb.Profile{{TimeUnixNano: uint64(time.Now().UnixNano())}},
+		}},
+	}}, &profilespb.ProfilesDictionary{StringTable: st})
+
+	want := []ResourceAttribute{
+		{"debug", "true"},
+		{"host.name", "node-1"},
+		{"k8s:label", "a:b"},
+		{"load", "0.5"},
+		{"process.pid", "42"},
+		{"service.name", "api"},
+	}
+	if got := s.ResourceAttributes(); !slices.Equal(got, want) {
+		t.Errorf("ResourceAttributes() = %v, want %v", got, want)
+	}
+
+	// Every offered attribute matches its own resource.
+	for _, filter := range s.ResourceTypes() {
+		if !MatchResourceFilters(st, attrs, []string{filter}) {
+			t.Errorf("resource type %q does not match the resource it stems from", filter)
+		}
+	}
+
+	// Returned slices are not modified by Add.
+	before := slices.Clone(s.ResourceAttributes())
+	handedOut := s.ResourceAttributes()
+	s.Add([]*profilespb.ResourceProfiles{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+			{Key: "a", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "first"}}},
+		}},
+		ScopeProfiles: []*profilespb.ScopeProfiles{{
+			Profiles: []*profilespb.Profile{{TimeUnixNano: uint64(time.Now().UnixNano())}},
+		}},
+	}}, &profilespb.ProfilesDictionary{StringTable: []string{""}})
+	if !slices.Equal(handedOut, before) {
+		t.Errorf("handed out slice changed to %v", handedOut)
+	}
+	if got := s.ResourceAttributes(); len(got) != len(want)+1 || got[0] != (ResourceAttribute{"a", "first"}) {
+		t.Errorf("ResourceAttributes() = %v after adding a:first", got)
+	}
+}
