@@ -1,0 +1,27 @@
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ '**' ]
+
+permissions: read-all
+
+name: UI
+jobs:
+  unit-tests:
+    name: unit tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Clone code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No dependencies, use the Node.js of the runner image.
+      - name: Node.js version
+        run: |
+          node --version
+      - name: test
+        run: |
+          make test-web

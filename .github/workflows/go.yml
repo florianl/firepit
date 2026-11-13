@@ -42,9 +42,6 @@ jobs:
       - name: lint
         run: |
           make lint
-      - name: web ui tests
-        run: |
-          make test-web
       - name: vulncheck
         run: |
           make vulncheck
