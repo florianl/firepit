@@ -6,7 +6,7 @@ A lightweight OpenTelemetry (OTel) profile receiver with a non-persistent storag
 
 - **Multi-Protocol Support**: Receive OTel profiles via gRPC (port 4317) and HTTP/JSON (port 4318)
 - **Multiple Sample Types**: View separate flame graphs for CPU, memory, and other profile types
-- **Multiple Views**: Interactive flame graph view and flamescope view for time-based performance analysis and sandwich views for isolated caller and callee execution flows
+- **Multiple Views**: Interactive flame graph view and flamescope view for time-based performance analysis and sandwich views for isolated caller and callee execution flows and a spectrogram view showing the number of samples over time per filterable attribute value
 - **Real-time Visualization**: Auto-refreshing flame graphs with pause/resume controls
 - **Resource Filtering**: Filter flame graphs by resource attributes (e.g., service.name)
 - **Frame Filtering**: Search and highlight specific functions within flame graphs
@@ -67,6 +67,10 @@ The flame graph view aggregates all collected profiles into a single interactive
 The flamescope view plots samples across a two-dimensional heatmap, wall-clock time on the x-axis and sub-second offset on the y-axis. This makes periodic or time-correlated performance patterns immediately visible, helping to correlate spikes with external events.
 
 ![Flamescope view showing time-based profile heatmap](img/flamescope.png)
+
+### Spectrogram View
+
+The spectrogram view shows how many samples were recorded over time for every attribute value that can be used as a filter. Each filterable attribute is a collapsible spectrum category that lists one row per attribute value, with wall-clock time on the x-axis. The color of a row at a point in time encodes the number of samples: transparent for no samples, light blue for a few samples, then yellow and orange, up to red for the peak.
 
 ### Sandwich View 
 

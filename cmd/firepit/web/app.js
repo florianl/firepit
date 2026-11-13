@@ -11,12 +11,14 @@ import {
     hasData,
     hasHeatMapData,
     hasSandwichData,
+    hasSpectrogramData,
     heatMapCells,
     matchesFrameFilter,
     offeredResourceFilters,
     resourceFilterParams,
     sanitizeId,
     sortSandwichFunctions,
+    spectrogramLayout,
     toQuery,
     wrapText,
 } from './lib.js';
@@ -70,6 +72,8 @@ let frameFilter = '';
 let currentGraphs = null;
 let viewMode = 'flamegraph';
 let sortMode = 'time-ordered';
+// Keys of the collapsed spectrogram categories.
+const collapsedSpectrumCategories = new Set();
 // Attribute keys rendered as virtual frames in the flame graph view,
 // outermost first. None are selected unless configured on the server.
 let virtualFrames = [];
@@ -198,7 +202,7 @@ function onViewModeChange(selectedMode) {
     viewMode = selectedMode;
     const filterContainer = document.getElementById('filter-container');
     const sortFilter = document.getElementById('sort-mode-filter');
-    if (viewMode === 'heatmap' || viewMode === 'sandwich') {
+    if (viewMode !== 'flamegraph') {
         if (isPaused) filterContainer.classList.remove('visible');
         sortFilter.style.display = 'none';
     } else {
@@ -363,6 +367,8 @@ function updateChart(force) {
 
     if (viewMode === 'heatmap') {
         fetchAndRenderHeatMap(query, force);
+    } else if (viewMode === 'spectrogram') {
+        fetchAndRenderSpectrogram(query, force);
     } else if (viewMode === 'sandwich') {
         fetchAndRenderSandwich(query, force);
     } else {
@@ -645,6 +651,180 @@ function renderHeatMap(container, d) {
     g.append('text').attr('x', legendX + legendW).attr('y', legendY - 2)
         .attr('text-anchor', 'end')
         .attr('font-size', '10px').attr('fill', '#555').text(d.maxValue);
+}
+
+function fetchAndRenderSpectrogram(query, force) {
+    renderTabbedView('/api/spectrogram', query, force, {
+        hasEntryData: s => hasSpectrogramData(s.data),
+        renderPanel: (panelId, s) => {
+            const panel = document.getElementById(panelId);
+            if (!panel) return;
+            if (!s.data.categories || s.data.categories.length === 0) {
+                panel.replaceChildren(messageElement('waiting', 'No filterable attributes for ' + s.type));
+                return;
+            }
+            renderSpectrogram(panel, s.data);
+        },
+    });
+}
+
+// Sample count colors, from few (light blue) to peak (red).
+const spectrogramColors = ['#8ecdf7', '#ffe14d', '#ff9a1f', '#e0201b'];
+
+function renderSpectrogram(container, d) {
+    const headerH = 22;
+    const rowH    = 16;
+    const catGap  = 6;
+
+    const totalWidth   = document.documentElement.clientWidth;
+    const marginTop    = 60;
+    const marginRight  = 20;
+    const marginBottom = 50;
+    const marginLeft   = Math.round(Math.min(340, Math.max(160, totalWidth * 0.25)));
+    const innerWidth   = Math.max(50, totalWidth - marginLeft - marginRight);
+
+    const { headers, rows, height: innerHeight } =
+        spectrogramLayout(d.categories, collapsedSpectrumCategories, headerH, rowH, catGap);
+    const totalHeight = innerHeight + marginTop + marginBottom;
+
+    const cellW = innerWidth / d.numBuckets;
+    const max = d.maxValue || 1;
+    // sqrt keeps low counts visible next to peaks.
+    const colorScale = d3.scaleLinear()
+        .domain(spectrogramColors.map((_, i) => i / (spectrogramColors.length - 1)))
+        .range(spectrogramColors)
+        .interpolate(d3.interpolateRgb)
+        .clamp(true);
+    const color = v => colorScale(Math.sqrt(v / max));
+
+    const bucketTime = i =>
+        new Date((d.minTimeSec + i * d.bucketSec) * 1000).toLocaleTimeString();
+    const maxLabelChars = Math.max(8, Math.floor((marginLeft - 34) / 6.5));
+    const truncate = s => s.length > maxLabelChars ? s.slice(0, maxLabelChars - 1) + '…' : s;
+
+    hideTooltip();
+    container.replaceChildren();
+    const svg = d3.select(container).append('svg')
+        .attr('width',  totalWidth)
+        .attr('height', totalHeight)
+        .style('display', 'block');
+
+    const g = svg.append('g')
+        .attr('transform', `translate(${marginLeft},${marginTop})`);
+
+    const headerG = svg.append('g')
+        .attr('transform', `translate(0,${marginTop})`)
+        .selectAll('g.spectrum-header')
+        .data(headers)
+        .join('g')
+        .attr('class', 'spectrum-header')
+        .attr('transform', h => `translate(0,${h.y})`)
+        .on('click', (event, h) => {
+            if (collapsedSpectrumCategories.has(h.key)) {
+                collapsedSpectrumCategories.delete(h.key);
+            } else {
+                collapsedSpectrumCategories.add(h.key);
+            }
+            renderSpectrogram(container, d);
+        });
+    headerG.append('rect')
+        .attr('width', totalWidth)
+        .attr('height', headerH - 2);
+    headerG.append('text')
+        .attr('x', 10).attr('y', (headerH - 2) / 2)
+        .attr('dominant-baseline', 'middle')
+        .attr('font-size', '12px').attr('font-weight', 600).attr('fill', '#2c3e50')
+        .text(h => (h.collapsed ? '▸ ' : '▾ ') + h.key + ' (' + h.count + ')');
+    headerG.append('title')
+        .text(h => (h.collapsed ? 'Expand ' : 'Collapse ') + h.key);
+
+    const labelG = g.append('g');
+    rows.forEach(r => {
+        const label = labelG.append('text')
+            .attr('x', -8).attr('y', r.y + rowH / 2)
+            .attr('text-anchor', 'end')
+            .attr('dominant-baseline', 'middle')
+            .attr('font-size', '11px').attr('fill', '#555')
+            .text(truncate(r.row.value));
+        label.append('title').text(r.key + ':' + r.row.value + ' — ' + r.row.total + ' samples');
+        labelG.append('line')
+            .attr('x1', 0).attr('x2', innerWidth)
+            .attr('y1', r.y + rowH).attr('y2', r.y + rowH)
+            .attr('stroke', '#f0f0f0');
+    });
+
+    const cellData = [];
+    rows.forEach(r => {
+        r.row.counts.forEach((v, i) => {
+            if (v > 0) cellData.push({ r, i, v });
+        });
+    });
+
+    g.selectAll('rect.sg-cell')
+        .data(cellData)
+        .join('rect')
+        .attr('class', 'sg-cell')
+        .attr('shape-rendering', 'crispEdges')
+        .attr('x', c => c.i * cellW)
+        .attr('y', c => c.r.y + 1)
+        .attr('width',  Math.max(cellW, 1))
+        .attr('height', rowH - 2)
+        .attr('fill', c => color(c.v))
+        .on('mousemove', function(event, c) {
+            showTooltip(event, `${c.r.key}:${c.r.row.value}  t=${bucketTime(c.i)}  samples=${c.v}`);
+        })
+        .on('mouseleave', hideTooltip);
+
+    const tickCount = Math.max(1, Math.min(10, Math.floor(innerWidth / 90)));
+    const tickStep  = Math.max(1, Math.round(d.numBuckets / tickCount));
+    const xTicks    = d3.range(0, d.numBuckets, tickStep);
+    const drawTimeAxis = (axisY, dir) => {
+        const axis = g.append('g').attr('transform', `translate(0, ${axisY})`);
+        xTicks.forEach(i => {
+            axis.append('text')
+                .attr('x', i * cellW)
+                .attr('y', dir * 16)
+                .attr('dominant-baseline', 'middle')
+                .attr('font-size', '11px')
+                .attr('fill', '#555')
+                .attr('text-anchor', 'middle')
+                .text(bucketTime(i));
+            axis.append('line')
+                .attr('x1', i * cellW).attr('x2', i * cellW)
+                .attr('y1', 0).attr('y2', dir * 5)
+                .attr('stroke', '#aaa');
+        });
+    };
+    drawTimeAxis(-4, -1);
+    drawTimeAxis(innerHeight, 1);
+    g.append('text')
+        .attr('x', innerWidth / 2).attr('y', innerHeight + 40)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', '12px').attr('fill', '#333')
+        .text('Time' + (d.bucketSec > 1 ? ` (${d.bucketSec}s per bucket)` : ''));
+
+    const legendW = 140, legendH = 10;
+    const legendX = innerWidth - legendW;
+    const legendY = -marginTop + 16;
+    // Gradient ids are global to the document.
+    const gradId = 'sg-legend-grad-' + container.id;
+    const grad = svg.append('defs').append('linearGradient').attr('id', gradId)
+        .attr('x1', '0%').attr('y1', '0%')
+        .attr('x2', '100%').attr('y2', '0%');
+    spectrogramColors.forEach((c, i) => {
+        grad.append('stop')
+            .attr('offset', (100 * i / (spectrogramColors.length - 1)) + '%')
+            .attr('stop-color', c);
+    });
+    g.append('rect')
+        .attr('x', legendX).attr('y', legendY)
+        .attr('width', legendW).attr('height', legendH)
+        .attr('fill', `url(#${gradId})`);
+    g.append('text').attr('x', legendX).attr('y', legendY - 3)
+        .attr('font-size', '10px').attr('fill', '#555').text('few samples');
+    g.append('text').attr('x', legendX + legendW).attr('y', legendY - 3)
+        .attr('text-anchor', 'end')
+        .attr('font-size', '10px').attr('fill', '#555').text('peak (' + max + ')');
 }
 
 let sandwichSortColumn = 'total';

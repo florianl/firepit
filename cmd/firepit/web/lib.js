@@ -75,6 +75,31 @@ export function hasHeatMapData(d) {
     return Boolean(d && d.numSeconds > 0);
 }
 
+// hasSpectrogramData reports whether a spectrogram has at least one bucket.
+export function hasSpectrogramData(d) {
+    return Boolean(d && d.numBuckets > 0);
+}
+
+// spectrogramLayout stacks the category headers and expanded rows vertically.
+export function spectrogramLayout(categories, collapsed, headerH, rowH, catGap) {
+    let y = 0;
+    const headers = [];
+    const rows = [];
+    categories.forEach(cat => {
+        const isCollapsed = collapsed.has(cat.key);
+        headers.push({ key: cat.key, count: cat.rows.length, collapsed: isCollapsed, y });
+        y += headerH;
+        if (!isCollapsed) {
+            cat.rows.forEach(row => {
+                rows.push({ key: cat.key, row, y });
+                y += rowH;
+            });
+        }
+        y += catGap;
+    });
+    return { headers, rows, height: y };
+}
+
 // hasSandwichData reports whether a sandwich view has any functions.
 export function hasSandwichData(d) {
     return Boolean(d && d.functions && d.functions.length > 0);

@@ -344,6 +344,7 @@ func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.S
 	cache := newResponseCache(st)
 	mux.HandleFunc(base+"/api/flamegraph", compressResponse(cache.wrap(handleFlamegraph(st, agg, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/flamescope", compressResponse(cache.wrap(handleFlamescope(st))))
+	mux.HandleFunc(base+"/api/spectrogram", compressResponse(cache.wrap(handleSpectrogram(st))))
 	mux.HandleFunc(base+"/api/sandwich", compressResponse(cache.wrap(handleSandwich(st, agg, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/sandwich-detail", compressResponse(cache.wrap(handleSandwichDetail(st, agg, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/profiles", compressResponse(cache.wrap(handleProfiles(st))))
@@ -527,6 +528,22 @@ func handleFlamescope(st *store.Store) http.HandlerFunc {
 		}
 
 		json.NewEncoder(w).Encode(maps)
+	})
+}
+
+func handleSpectrogram(st *store.Store) http.HandlerFunc {
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
+		filters := r.URL.Query()["resourceType"]
+
+		types := st.SampleTypes()
+		spectrograms := make([]profiler.NamedSpectrogram, 0, len(types))
+		for _, t := range types {
+			entries := st.ProfileEntries(t)
+			entries = profiler.FilterByResource(entries, filters)
+			spectrograms = append(spectrograms, profiler.NamedSpectrogram{Type: t, Data: profiler.ToSpectrogram(entries)})
+		}
+
+		json.NewEncoder(w).Encode(spectrograms)
 	})
 }
 
