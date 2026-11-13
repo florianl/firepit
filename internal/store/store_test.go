@@ -727,3 +727,50 @@ func TestResourceAttributes(t *testing.T) {
 		t.Errorf("ResourceAttributes() = %v after adding a:first", got)
 	}
 }
+
+func TestMetrics(t *testing.T) {
+	s := New(time.Minute, time.Hour, 0)
+	defer s.Close()
+
+	add := func(sampleType string, ts time.Time) {
+		s.Add([]*profilespb.ResourceProfiles{{
+			ScopeProfiles: []*profilespb.ScopeProfiles{{
+				Profiles: []*profilespb.Profile{{
+					SampleType:   &profilespb.ValueType{TypeStrindex: 1},
+					TimeUnixNano: uint64(ts.UnixNano()),
+				}},
+			}},
+		}}, &profilespb.ProfilesDictionary{StringTable: []string{"", sampleType}})
+	}
+
+	now := time.Now()
+	add("cpu", now)
+	add("cpu", now.Add(-time.Second))
+	add("alloc", now.Add(-2*time.Second))
+	add("alloc", now.Add(-time.Hour)) // expired
+	s.Add([]*profilespb.ResourceProfiles{{}}, nil)
+
+	m := s.Metrics()
+	if m.Profiles != 4 || m.SampleTypes != 2 || m.AddedProfiles != 4 || m.DroppedRequests != 1 || m.Bytes <= 0 {
+		t.Errorf("after adding: %+v", m)
+	}
+
+	s.cleanup()
+	m = s.Metrics()
+	if m.Profiles != 3 || m.ExpiredProfiles != 1 || m.EvictedProfiles != 0 {
+		t.Errorf("after expiry: %+v", m)
+	}
+
+	// Leave room for one profile only.
+	s.mu.Lock()
+	s.maxMemory = s.totalBytes / 3
+	s.mu.Unlock()
+	s.cleanup()
+	m = s.Metrics()
+	if m.Profiles != 1 || m.EvictedProfiles != 2 || m.ExpiredProfiles != 1 || m.AddedProfiles != 4 {
+		t.Errorf("after eviction: %+v", m)
+	}
+	if m.MaxBytes == 0 || m.Bytes > m.MaxBytes {
+		t.Errorf("after eviction: %d bytes with a limit of %d", m.Bytes, m.MaxBytes)
+	}
+}

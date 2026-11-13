@@ -190,6 +190,44 @@ type Store struct {
 	generation      atomic.Uint64
 	changed         chan struct{} // closed and replaced on every change
 	done            chan struct{}
+
+	// Counters for Metrics, guarded by mu except droppedRequests.
+	addedProfiles   uint64
+	expiredProfiles uint64
+	evictedProfiles uint64
+	droppedRequests atomic.Uint64
+}
+
+// Metrics is a snapshot of the store state and counters.
+type Metrics struct {
+	Profiles        int
+	SampleTypes     int
+	Bytes           int64
+	MaxBytes        int64 // 0 if unlimited
+	AddedProfiles   uint64
+	ExpiredProfiles uint64 // removed after the retention time
+	EvictedProfiles uint64 // removed to meet the memory limit
+	DroppedRequests uint64 // requests without dictionary
+}
+
+// Metrics returns the current metrics of the store.
+func (s *Store) Metrics() Metrics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	m := Metrics{
+		SampleTypes:     len(s.entries),
+		Bytes:           s.totalBytes,
+		MaxBytes:        s.maxMemory,
+		AddedProfiles:   s.addedProfiles,
+		ExpiredProfiles: s.expiredProfiles,
+		EvictedProfiles: s.evictedProfiles,
+		DroppedRequests: s.droppedRequests.Load(),
+	}
+	for _, entries := range s.entries {
+		m.Profiles += len(entries)
+	}
+	return m
 }
 
 // New creates a new Store with the specified max age, cleanup interval, and max memory.
@@ -212,6 +250,7 @@ func New(maxAge, cleanupInterval time.Duration, maxMemory int64) *Store {
 // of the profiles and the dictionary, and interns the dictionary strings.
 func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary *profilespb.ProfilesDictionary) {
 	if dictionary == nil {
+		s.droppedRequests.Add(1)
 		return
 	}
 
@@ -316,6 +355,7 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 	for _, e := range newEntries {
 		s.entries[e.key] = append(s.entries[e.key], e.entry)
 		s.totalBytes += e.entry.Size
+		s.addedProfiles++
 	}
 	s.resourceAttrs = mergeSorted(s.resourceAttrs, seenResourceAttrs, compareResourceAttributes)
 	s.attributeKeys = mergeSorted(s.attributeKeys, seenAttributeKeys, strings.Compare)
@@ -468,6 +508,7 @@ func (s *Store) cleanup() {
 					kept = append(kept, entry)
 				} else {
 					s.totalBytes -= entry.Size
+					s.expiredProfiles++
 				}
 			}
 			if len(kept) == len(entries) {
@@ -546,6 +587,7 @@ func (s *Store) evictOldest() int {
 		s.totalBytes -= item.size
 		dropped++
 	}
+	s.evictedProfiles += uint64(dropped)
 
 	for typeStr, marks := range evict {
 		entries := s.entries[typeStr]

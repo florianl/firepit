@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -72,9 +73,15 @@ func readAll(rd io.Reader, length, maxBodySize int64) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
-func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
+// NewHTTPHandler returns a handler for OTLP/HTTP JSON requests.
+func NewHTTPHandler(s *store.Store, maxBodySize int64, metrics *Metrics) http.HandlerFunc {
+	invalid := func(m *Metrics) *atomic.Uint64 { return &m.httpRejectedInvalid }
+	tooLarge := func(m *Metrics) *atomic.Uint64 { return &m.httpRejectedLarge }
+	accepted := func(m *Metrics) *atomic.Uint64 { return &m.httpAccepted }
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			metrics.count(invalid)
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -83,6 +90,7 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
 		defer r.Body.Close()
 
 		if enc := r.Header.Get("Content-Encoding"); enc != "" && enc != "identity" && enc != "gzip" {
+			metrics.count(invalid)
 			w.Header().Set("Accept-Encoding", "gzip")
 			http.Error(w, "Unsupported content encoding", http.StatusUnsupportedMediaType)
 			return
@@ -91,9 +99,11 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
 		body, err := readBody(r, maxBodySize)
 		if err != nil {
 			if _, ok := errors.AsType[*http.MaxBytesError](err); ok || errors.Is(err, errBodyTooLarge) {
+				metrics.count(tooLarge)
 				http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}
+			metrics.count(invalid)
 			http.Error(w, "Failed to read body", http.StatusBadRequest)
 			return
 		}
@@ -104,11 +114,13 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64) http.HandlerFunc {
 			requestPool.Put(req)
 		}()
 		if err := protojson.Unmarshal(body, req); err != nil {
+			metrics.count(invalid)
 			http.Error(w, "Failed to parse request: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		s.Add(req.ResourceProfiles, req.Dictionary)
+		metrics.count(accepted)
 
 		resp := responsePool.Get().(*collectorprofiles.ExportProfilesServiceResponse)
 		defer func() {

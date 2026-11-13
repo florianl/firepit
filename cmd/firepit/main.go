@@ -194,6 +194,8 @@ func main() {
 		"max_storage_bytes", cfg.MaxStorageBytes, "from_file", cfg.FromFile,
 		"virtual_frames", cfg.VirtualFrames)
 
+	metrics := &receiver.Metrics{}
+
 	var wg sync.WaitGroup
 	var initGroup sync.WaitGroup
 	var grpcServer *grpc.Server
@@ -211,14 +213,14 @@ func main() {
 		initGroup.Add(1)
 		wg.Go(func() {
 			defer initGroup.Done()
-			grpcServer = startGRPCServer(st, cfg.GRPCAddr, &wg)
+			grpcServer = startGRPCServer(st, metrics, cfg.GRPCAddr, &wg)
 		})
 
 		// ingest - http
 		initGroup.Add(1)
 		wg.Go(func() {
 			defer initGroup.Done()
-			otlpServer = startOTLPHTTPServer(st, cfg, &wg)
+			otlpServer = startOTLPHTTPServer(st, metrics, cfg, &wg)
 		})
 	}
 
@@ -226,7 +228,7 @@ func main() {
 	initGroup.Add(1)
 	wg.Go(func() {
 		defer initGroup.Done()
-		webServer = startWebUIServer(st, cfg, &wg)
+		webServer = startWebUIServer(st, metrics, cfg, &wg)
 	})
 
 	// Avoid race condition by waiting for servers to start
@@ -295,7 +297,7 @@ func loadFromFile(st *store.Store, path string) error {
 	return nil
 }
 
-func startGRPCServer(st *store.Store, grpcAddr string, wg *sync.WaitGroup) *grpc.Server {
+func startGRPCServer(st *store.Store, metrics *receiver.Metrics, grpcAddr string, wg *sync.WaitGroup) *grpc.Server {
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		slog.Error("Failed to listen on gRPC address", "addr", grpcAddr, "error", err)
@@ -309,7 +311,7 @@ func startGRPCServer(st *store.Store, grpcAddr string, wg *sync.WaitGroup) *grpc
 			Timeout: defaultTimeouts.readHeader,
 		}),
 	)
-	collectorprofiles.RegisterProfilesServiceServer(grpcServer, receiver.New(st))
+	collectorprofiles.RegisterProfilesServiceServer(grpcServer, receiver.New(st, metrics))
 
 	slog.Info("gRPC server listening", "addr", grpcAddr)
 	wg.Go(func() {
@@ -348,14 +350,14 @@ func newHTTPServer(addr string, handler http.Handler, timeouts serverTimeouts) *
 	}
 }
 
-// buildWebUIMux returns the handler of the web UI.
+// buildWebUIMux returns the web UI handler without receiver metrics.
 func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
-	mux, _ := buildWebUI(st, cfg)
+	mux, _ := buildWebUI(st, nil, cfg)
 	return mux
 }
 
-// buildWebUI returns the handler of the web UI and a function to end its event streams.
-func buildWebUI(st *store.Store, cfg Config) (*http.ServeMux, func()) {
+// buildWebUI returns the web UI handler and a function to end its event streams.
+func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.ServeMux, func()) {
 	mux := http.NewServeMux()
 	done := make(chan struct{})
 	stop := sync.OnceFunc(func() { close(done) })
@@ -397,6 +399,13 @@ func buildWebUI(st *store.Store, cfg Config) (*http.ServeMux, func()) {
 	mux.HandleFunc(base+"/api/config", compressResponse(handleConfig(cfg)))
 	mux.HandleFunc(base+"/api/events", handleEvents(st, done, eventMinInterval, eventHeartbeat))
 
+	mux.HandleFunc(base+"/metrics", handleMetrics(st, metrics, time.Now()))
+	mux.HandleFunc(base+"/healthz", handleHealth)
+	// Probes may not know the base path.
+	if base != "" {
+		mux.HandleFunc("/healthz", handleHealth)
+	}
+
 	prefix := base + "/debug/pprof"
 	if cfg.RuntimeProfiling {
 		mux.HandleFunc(prefix+"/", pprof.Index)
@@ -418,8 +427,8 @@ func buildWebUI(st *store.Store, cfg Config) (*http.ServeMux, func()) {
 	return mux, stop
 }
 
-func startWebUIServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.Server {
-	mux, stop := buildWebUI(st, cfg)
+func startWebUIServer(st *store.Store, metrics *receiver.Metrics, cfg Config, wg *sync.WaitGroup) *http.Server {
+	mux, stop := buildWebUI(st, metrics, cfg)
 
 	// Runtime profiling endpoints stream for as long as the client asks for.
 	timeouts := defaultTimeouts
@@ -439,9 +448,9 @@ func startWebUIServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.Ser
 	return server
 }
 
-func startOTLPHTTPServer(st *store.Store, cfg Config, wg *sync.WaitGroup) *http.Server {
+func startOTLPHTTPServer(st *store.Store, metrics *receiver.Metrics, cfg Config, wg *sync.WaitGroup) *http.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/profiles", receiver.NewHTTPHandler(st, cfg.MaxBodySize))
+	mux.HandleFunc("/v1/profiles", receiver.NewHTTPHandler(st, cfg.MaxBodySize, metrics))
 
 	server := newHTTPServer(cfg.HTTPAddr, mux, defaultTimeouts)
 

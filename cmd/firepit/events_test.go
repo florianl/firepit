@@ -135,7 +135,7 @@ func TestEventsEndOnShutdown(t *testing.T) {
 	st := store.New(time.Hour, time.Hour, 0)
 	defer st.Close()
 
-	mux, stop := buildWebUI(st, Config{})
+	mux, stop := buildWebUI(st, nil, Config{})
 	server := httptest.NewUnstartedServer(mux)
 	server.Config.RegisterOnShutdown(stop)
 	server.Start()
