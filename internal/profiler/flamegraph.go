@@ -17,6 +17,13 @@ import (
 // from resource or sample attributes rather than from code locations.
 const VirtualFrameType = "virtual"
 
+// maxStackDepth is the maximum number of frames rendered per stack. Deeper
+// stacks would nest too deeply for encoding/json.
+const maxStackDepth = 2048
+
+// truncatedFrameName is the frame that replaces frames beyond maxStackDepth.
+const truncatedFrameName = "[stack truncated]"
+
 // unsetAttrValue is used for virtual frames whose attribute is not present
 // on a sample or its resource.
 const unsetAttrValue = "<unset>"
@@ -366,9 +373,24 @@ func (r *stackResolver) resolveStack(idx int32) []FrameInfo {
 
 	start := len(r.stackArena)
 	if stackEntry := r.dict.StackTable[idx]; stackEntry != nil {
-		// location_indices are leaf-first
-		for _, locIdx := range slices.Backward(stackEntry.LocationIndices) {
+		// location_indices are leaf-first, keep the root side
+		locationIndices := stackEntry.LocationIndices
+		truncated := len(locationIndices) > maxStackDepth
+		if truncated {
+			locationIndices = locationIndices[len(locationIndices)-maxStackDepth:]
+		}
+
+		for _, locIdx := range slices.Backward(locationIndices) {
 			r.stackArena = append(r.stackArena, r.resolveLocation(locIdx)...)
+		}
+
+		// Inlined functions can still exceed the limit
+		if len(r.stackArena)-start > maxStackDepth {
+			r.stackArena = r.stackArena[:start+maxStackDepth]
+			truncated = true
+		}
+		if truncated {
+			r.stackArena = append(r.stackArena, FrameInfo{Name: truncatedFrameName})
 		}
 	}
 	end := len(r.stackArena)
