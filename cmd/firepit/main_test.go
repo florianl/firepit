@@ -589,9 +589,13 @@ func TestHandleAttributeKeys(t *testing.T) {
 // TestWebUIDoesNotBuildHTMLFromData checks that the web UI assigns only
 // constant strings as HTML, as profile data is untrusted.
 func TestWebUIDoesNotBuildHTMLFromData(t *testing.T) {
-	index, err := webFS.ReadFile("web/index.html")
-	if err != nil {
-		t.Fatal(err)
+	var sources []byte
+	for _, name := range []string{"index.html", "app.js", "lib.js"} {
+		content, err := webFS.ReadFile("web/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources = append(sources, content...)
 	}
 
 	unsafe := []*regexp.Regexp{
@@ -604,7 +608,7 @@ func TestWebUIDoesNotBuildHTMLFromData(t *testing.T) {
 	allowed := regexp.MustCompile(`\.html\(null\)`)
 
 	// Split by statement as they may span multiple lines.
-	statements := strings.Split(string(index), ";")
+	statements := strings.Split(string(sources), ";")
 	for _, stmt := range statements {
 		stmt = allowed.ReplaceAllString(stmt, "")
 		for _, re := range unsafe {
@@ -848,5 +852,68 @@ func TestWriteNamedJSON(t *testing.T) {
 	writeNamedJSON(w, "root", nil)
 	if got := strings.TrimSpace(w.Body.String()); got != "[]" {
 		t.Errorf("no items: %s, want []", got)
+	}
+}
+
+// The web UI is split into several files. All files it refers to have to be
+// embedded and served with a content type browsers accept for them.
+func TestWebUIAssets(t *testing.T) {
+	st := store.New(5*time.Minute, time.Hour, 0)
+	defer st.Close()
+	mux := buildWebUIMux(st, Config{BasePath: "/firepit"})
+
+	read := func(name string) string {
+		t.Helper()
+		content, err := webFS.ReadFile("web/" + name)
+		if err != nil {
+			t.Fatalf("%s is not embedded: %v", name, err)
+		}
+		return string(content)
+	}
+
+	// Files referred to by index.html and, as imports, by the scripts.
+	refs := regexp.MustCompile(`(?:src|href)="([^"]+)"`).FindAllStringSubmatch(read("index.html"), -1)
+	imports := regexp.MustCompile(`from '\./([^']+)'`)
+	var files []string
+	for _, ref := range refs {
+		files = append(files, ref[1])
+		if strings.HasSuffix(ref[1], ".js") && !strings.Contains(ref[1], "d3") {
+			for _, imp := range imports.FindAllStringSubmatch(read(ref[1]), -1) {
+				files = append(files, imp[1])
+			}
+		}
+	}
+	for _, want := range []string{"style.css", "app.js", "lib.js"} {
+		if !slices.Contains(files, want) {
+			t.Errorf("%s is not referred to by the web UI; found %v", want, files)
+		}
+	}
+
+	for _, name := range files {
+		if strings.Contains(name, "d3") {
+			// Downloaded by "make generate" and not part of the repository.
+			continue
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/firepit/"+name, nil))
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s: status = %d", name, w.Code)
+			continue
+		}
+		wantType := "text/css"
+		if strings.HasSuffix(name, ".js") {
+			// Browsers refuse to run modules served with another type.
+			wantType = "text/javascript"
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, wantType) {
+			t.Errorf("GET %s: Content-Type = %q, want %s", name, ct, wantType)
+		}
+	}
+
+	// The page itself carries neither styles nor scripts, apart from the
+	// base path the server fills in.
+	index := read("index.html")
+	if strings.Contains(index, "<style") || strings.Count(index, "<script>") != 1 {
+		t.Error("index.html contains inline styles or scripts")
 	}
 }
