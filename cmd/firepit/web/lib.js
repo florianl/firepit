@@ -112,6 +112,7 @@ export function wrapText(text, maxChars) {
     return lines;
 }
 
+// formatTime rounds value to an integer string. It does not format units.
 export function formatTime(value) {
     return Math.round(value).toString();
 }
@@ -165,6 +166,7 @@ export function buildExport(graph, resourceType, virtualFrames, now) {
     };
 }
 
+// exportFilename returns the name of the file a flame graph of type is exported to.
 export function exportFilename(type, now) {
     return `flamegraph-${type}-${now.getTime()}.json`;
 }

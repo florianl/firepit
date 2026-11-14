@@ -254,12 +254,10 @@ function renderFlamegraph(containerId, data) {
     const selection = d3.select(container);
     selection.datum(data).call(fg);
 
-    // Reapply frame filter if one is active
     if (frameFilter) {
         setTimeout(applyFrameFilter, 0);
     }
 
-    // Listen for clicks on the flamegraph and reapply filter after interaction
     selection.on('click', function() {
         if (frameFilter) {
             setTimeout(applyFrameFilter, 50);
@@ -367,7 +365,6 @@ function updateChart(force) {
         fetchAndRenderFlamegraph(query, force);
     }
 
-    // Profile count / time range
     fetch(window.__BASE_PATH__ + '/api/profiles')
         .then(r => r.json())
         .then(data => {
@@ -516,7 +513,6 @@ function renderHeatMap(container, d) {
     const innerWidth   = totalWidth  - marginLeft - marginRight;
     const innerHeight  = totalHeight - marginTop  - marginBottom;
 
-    // Scales
     const xScale = d3.scaleLinear()
         .domain([0, d.numSeconds])
         .range([0, innerWidth]);
@@ -542,7 +538,6 @@ function renderHeatMap(container, d) {
 
     const cellData = heatMapCells(d);
 
-    // Render cells
     g.selectAll('rect.hm-cell')
         .data(cellData)
         .join('rect')
@@ -716,7 +711,6 @@ function fetchSandwichDetail(functionName, sampleType, rightPanel) {
 function renderSandwichTable(container, rightPanel, type, data) {
     if (!data || !data.functions) return;
 
-    // Clear container first to ensure only one table is rendered
     container.replaceChildren();
 
     const functions = [...data.functions];
@@ -797,7 +791,6 @@ function renderDAGGraph(container, sandwichData) {
     const width = container.clientWidth;
     const height = Math.max(300, container.clientHeight - 40);
 
-    // Build node and link data
     let selectedName = null;
     let callersRoot = null;
     let calleesRoot = null;
@@ -817,12 +810,11 @@ function renderDAGGraph(container, sandwichData) {
     const links = [];
     const nodeMap = new Map();
 
-    // Add center node (selected frame)
     const centerNode = { id: 'center', name: selectedName, type: 'center', value: null, x: width / 2, y: height / 2 };
     nodes.push(centerNode);
     nodeMap.set('center', centerNode);
 
-    // Helper to flatten tree and limit depth to 7
+    // addNodesFromTree adds the callers or callees of root as nodes and links.
     function addNodesFromTree(root, isCallers) {
         if (!root || !root.children) return;
 
@@ -847,10 +839,9 @@ function renderDAGGraph(container, sandwichData) {
                 currentNode = nodeMap.get(key);
             }
 
-            // Add link
             links.push({ source: isCallers ? currentNode.id : parentId, target: isCallers ? parentId : currentNode.id });
 
-            // Recursively add children (limit to 5 per frame)
+            // At most 5 children per frame.
             if (node.children) {
                 node.children.slice(0, 5).forEach(child => {
                     traverse(child, depth + 1, currentNode.id);
@@ -858,7 +849,6 @@ function renderDAGGraph(container, sandwichData) {
             }
         }
 
-        // Start traversal from root's children (limit to DAG_MAX_ROOT_CHILDREN immediate callers/callees)
         if (root.children) {
             root.children.slice(0, DAG_MAX_ROOT_CHILDREN).forEach(child => {
                 traverse(child, 1, 'center');
@@ -866,12 +856,10 @@ function renderDAGGraph(container, sandwichData) {
         }
     }
 
-    // Add callers (flowing up to the selected frame)
     if (callersRoot) {
         addNodesFromTree(callersRoot, true);
     }
 
-    // Add callees (flowing down from the selected frame)
     if (calleesRoot) {
         addNodesFromTree(calleesRoot, false);
     }
@@ -881,13 +869,11 @@ function renderDAGGraph(container, sandwichData) {
         return;
     }
 
-    // Calculate positions using a simple tree layout
     const nodeWidth = 280;
     const charWidth = 7;
     const verticalSpacing = 80;
     const horizontalSpacing = 340;
 
-    // Calculate node heights based on text content
     const lineHeight = 14;
     const nodePaddingV = 8;
     const sidePadding = 5;
@@ -897,7 +883,6 @@ function renderDAGGraph(container, sandwichData) {
         n.nodeHeight = Math.max(40, lines.length * lineHeight + nodePaddingV * 2);
     });
 
-    // Group nodes by type and depth
     const callersByDepth = {};
     const calleesByDepth = {};
 
@@ -913,7 +898,6 @@ function renderDAGGraph(container, sandwichData) {
         }
     });
 
-    // Position callers (above center)
     Object.keys(callersByDepth).sort().reverse().forEach(d => {
         const depth = parseInt(d);
         const nodesAtDepth = callersByDepth[d];
@@ -928,7 +912,6 @@ function renderDAGGraph(container, sandwichData) {
         });
     });
 
-    // Position callees (below center)
     Object.keys(calleesByDepth).sort().forEach(d => {
         const depth = parseInt(d);
         const nodesAtDepth = calleesByDepth[d];
@@ -943,7 +926,6 @@ function renderDAGGraph(container, sandwichData) {
         });
     });
 
-    // Calculate bounds of all nodes and center the DAG
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
     nodes.forEach(n => {
@@ -953,29 +935,24 @@ function renderDAGGraph(container, sandwichData) {
         maxY = Math.max(maxY, n.y + n.nodeHeight / 2);
     });
 
-    // Calculate offset to center the DAG
     const padding = 40;
     const graphWidth = maxX - minX + padding * 2;
     const graphHeight = maxY - minY + padding * 2;
     const offsetX = (width - graphWidth) / 2 - minX + padding;
     const offsetY = (height - graphHeight) / 2 - minY + padding;
 
-    // Apply offset to all nodes
     nodes.forEach(n => {
         n.x += offsetX;
         n.y += offsetY;
     });
 
-    // Create SVG
     const svg = d3.select(container).append('svg')
         .attr('width', width)
         .attr('height', height)
         .style('background-color', 'white');
 
-    // Create a group for zoom/pan
     const g = svg.append('g');
 
-    // Define arrow markers
     svg.append('defs').append('marker')
         .attr('id', 'arrowhead')
         .attr('markerWidth', 10)
@@ -987,7 +964,6 @@ function renderDAGGraph(container, sandwichData) {
         .attr('points', '0 0, 10 3, 0 6')
         .attr('fill', '#666');
 
-    // Draw links
     g.selectAll('line.link')
         .data(links)
         .join('line')
@@ -1012,14 +988,12 @@ function renderDAGGraph(container, sandwichData) {
         .attr('stroke-width', 2)
         .attr('marker-end', 'url(#arrowhead)');
 
-    // Draw nodes
     const nodes_g = g.selectAll('g.node')
         .data(nodes)
         .join('g')
         .attr('class', 'node')
         .attr('transform', d => `translate(${d.x},${d.y})`);
 
-    // Color mapper for frame types (same as flamegraph)
     const colorMapper = function(d) {
         if (d.type === 'center') return '#2c3e50';
 
@@ -1054,7 +1028,6 @@ function renderDAGGraph(container, sandwichData) {
         .attr('dy', (d, i) => i === 0 ? 0 : lineHeight)
         .text(d => d);
 
-    // Add zoom behavior
     const zoom = d3.zoom()
         .on('zoom', (event) => {
             g.attr('transform', event.transform);

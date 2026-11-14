@@ -240,9 +240,8 @@ func New(maxAge, cleanupInterval time.Duration, maxMemory int64) *Store {
 	return s
 }
 
-// Add stores profiles with their associated dictionary. dictionary must not be nil;
-// if nil, the profiles are discarded and not stored. The store takes ownership
-// of the profiles and the dictionary, and interns the dictionary strings.
+// Add stores profiles with their dictionary, or discards them if dictionary is
+// nil. The store takes ownership of both and interns the dictionary strings.
 func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary *profilespb.ProfilesDictionary) {
 	if dictionary == nil {
 		s.droppedRequests.Add(1)
@@ -295,7 +294,6 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 					continue
 				}
 
-				// Resolve sample type and unit
 				typeStr := "unknown"
 				unitStr := ""
 				if profile.SampleType != nil {
@@ -306,7 +304,6 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 					unitStr = Lookup(st, profile.SampleType.UnitStrindex)
 				}
 
-				// Format key as "type(unit)"
 				key := typeStr
 				if unitStr != "" {
 					key = typeStr + "(" + unitStr + ")"
@@ -333,7 +330,6 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 		}
 
 		if stored {
-			// Cache resource attributes for the filtering
 			collectResourceAttributes(seenResourceAttrs, st, resAttrs)
 			collectAttributeKeys(seenAttributeKeys, st, resAttrs)
 		}
@@ -517,7 +513,6 @@ func (s *Store) cleanup() {
 	s.generation.Add(1)
 	s.notifyChanged()
 
-	// Update ResourceAttributes for filtering
 	seenResourceAttrs := make(map[ResourceAttribute]bool)
 	seenAttributeKeys := make(map[string]bool)
 	for st := range s.entries {

@@ -64,7 +64,7 @@ type Config struct {
 func loadConfig() Config {
 	cfg := loadConfigFromEnv(os.Getenv)
 
-	// Parse command-line flags (override environment variables)
+	// Flags override environment variables.
 	flag.StringVar(&cfg.GRPCAddr, "grpc-addr", cfg.GRPCAddr, "gRPC server address")
 	flag.StringVar(&cfg.HTTPAddr, "http-addr", cfg.HTTPAddr, "HTTP/OTLP server address")
 	flag.StringVar(&cfg.WebAddr, "web-addr", cfg.WebAddr, "Web UI server address")
@@ -215,7 +215,6 @@ func main() {
 		}
 	}
 
-	// Wait for all components to terminate.
 	wg.Wait()
 
 	slog.Info("Shutdown complete")
@@ -367,7 +366,6 @@ func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.S
 		mux.HandleFunc(prefix+"/profile", pprof.Profile)
 		mux.HandleFunc(prefix+"/symbol", pprof.Symbol)
 		mux.HandleFunc(prefix+"/trace", pprof.Trace)
-		// Register runtime profiles
 		for _, p := range rpprof.Profiles() {
 			mux.Handle(prefix+"/"+p.Name(), pprof.Handler(p.Name()))
 		}
