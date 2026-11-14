@@ -544,6 +544,9 @@ func ExtractSandwichGraphs(root *FlameNode, targetName string) *SandwichGraphs {
 
 	// Build caller flamegraph with target as root, showing who calls it
 	callersGraph := buildCallerGraph(root, targetName)
+	if callersGraph == nil {
+		return &SandwichGraphs{}
+	}
 
 	// Build callee flamegraph with target as root, showing what it calls
 	calleeGraph := buildCalleeGraph(root, targetName)

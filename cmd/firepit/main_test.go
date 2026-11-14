@@ -827,6 +827,12 @@ func TestAggregatedHandlersMatchProfiler(t *testing.T) {
 			}
 		}
 	}
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/sandwich-detail?functionName=missing", nil))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("unknown function: status = %d, want 404", w.Code)
+	}
 }
 
 func TestWriteNamedJSON(t *testing.T) {
