@@ -49,9 +49,6 @@ func TestAcceptsGzip(t *testing.T) {
 }
 
 func TestCompressResponse(t *testing.T) {
-	st := store.New(5*time.Minute, time.Hour, 0)
-	defer st.Close()
-
 	plain := httptest.NewRecorder()
 	handleConfig(Config{})(plain, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 

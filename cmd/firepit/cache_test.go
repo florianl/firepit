@@ -167,7 +167,8 @@ func TestResponseCacheConcurrent(t *testing.T) {
 
 	var calls atomic.Int32
 	inner := handleFlamegraph(st, newTestAggregator(t, st), nil)
-	handler := newResponseCache(st).wrap(func(w http.ResponseWriter, r *http.Request) {
+	cache := newResponseCache(st)
+	handler := cache.wrap(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		inner(w, r)
 	})
@@ -191,10 +192,6 @@ func TestResponseCacheConcurrent(t *testing.T) {
 	for i := range 4 * maxCachedResponses {
 		w := httptest.NewRecorder()
 		handler(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/flamegraph?resourceType=k:%d", i), nil))
-	}
-	cache := newResponseCache(st)
-	for i := range 4 * maxCachedResponses {
-		cache.entry(fmt.Sprintf("key-%d", i))
 		if n := len(cache.entries); n > maxCachedResponses {
 			t.Fatalf("%d cached responses, want at most %d", n, maxCachedResponses)
 		}
@@ -224,9 +221,6 @@ func BenchmarkPollFlamegraph(b *testing.B) {
 
 	b.Run("uncached", func(b *testing.B) {
 		poll(b, handleFlamegraph(st, newTestAggregator(b, st), nil), "")
-	})
-	b.Run("cached", func(b *testing.B) {
-		poll(b, newResponseCache(st).wrap(handleFlamegraph(st, newTestAggregator(b, st), nil)), "")
 	})
 	b.Run("revalidated", func(b *testing.B) {
 		handler := newResponseCache(st).wrap(handleFlamegraph(st, newTestAggregator(b, st), nil))
