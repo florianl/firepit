@@ -207,9 +207,7 @@ func (s staticFiles) serve(w http.ResponseWriter, r *http.Request, name string) 
 		http.NotFound(w, r)
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !allowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 
