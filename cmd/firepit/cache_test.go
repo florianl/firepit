@@ -197,35 +197,3 @@ func TestResponseCacheConcurrent(t *testing.T) {
 		}
 	}
 }
-
-// BenchmarkPollFlamegraph measures polling an unchanged flame graph of 100 profiles.
-func BenchmarkPollFlamegraph(b *testing.B) {
-	st := store.New(5*time.Minute, time.Hour, 0)
-	defer st.Close()
-	for range 10 {
-		addTestProfiles(st, 10)
-	}
-
-	poll := func(b *testing.B, handler http.HandlerFunc, etag string) {
-		req := httptest.NewRequest(http.MethodGet, "/api/flamegraph", nil)
-		if etag != "" {
-			req.Header.Set("If-None-Match", etag)
-		}
-		b.ReportAllocs()
-		for b.Loop() {
-			w := httptest.NewRecorder()
-			handler(w, req)
-			b.SetBytes(int64(w.Body.Len()))
-		}
-	}
-
-	b.Run("uncached", func(b *testing.B) {
-		poll(b, handleFlamegraph(st, newTestAggregator(b, st), nil), "")
-	})
-	b.Run("revalidated", func(b *testing.B) {
-		handler := newResponseCache(st).wrap(handleFlamegraph(st, newTestAggregator(b, st), nil))
-		w := httptest.NewRecorder()
-		handler(w, httptest.NewRequest(http.MethodGet, "/api/flamegraph", nil))
-		poll(b, handler, w.Header().Get("ETag"))
-	})
-}

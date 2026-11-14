@@ -9,14 +9,22 @@ import (
 	"github.com/florianl/firepit/internal/store"
 )
 
-// pollFlamegraph requests the flame graph like the web UI does.
-func pollFlamegraph(b *testing.B, mux *http.ServeMux) {
+// pollFlamegraph requests the flame graph like the web UI does. With an etag,
+// it expects the response to be not modified.
+func pollFlamegraph(b *testing.B, mux *http.ServeMux, etag string) *httptest.ResponseRecorder {
 	b.Helper()
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/flamegraph", nil))
-	if w.Code != http.StatusOK || w.Body.Len() < 1000 {
-		b.Fatalf("status = %d with %d bytes", w.Code, w.Body.Len())
+	req := httptest.NewRequest(http.MethodGet, "/api/flamegraph", nil)
+	want := http.StatusOK
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+		want = http.StatusNotModified
 	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != want || (want == http.StatusOK && w.Body.Len() < 1000) {
+		b.Fatalf("status = %d with %d bytes, want %d", w.Code, w.Body.Len(), want)
+	}
+	return w
 }
 
 // BenchmarkPollUnchanged measures polling 100 unchanged profiles.
@@ -27,12 +35,20 @@ func BenchmarkPollUnchanged(b *testing.B) {
 		addTestProfiles(st, 10)
 	}
 	mux := buildWebUIMux(b, st, Config{})
-	pollFlamegraph(b, mux)
+	etag := pollFlamegraph(b, mux, "").Header().Get("ETag")
 
-	b.ReportAllocs()
-	for b.Loop() {
-		pollFlamegraph(b, mux)
-	}
+	b.Run("cached", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			pollFlamegraph(b, mux, "")
+		}
+	})
+	b.Run("revalidated", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			pollFlamegraph(b, mux, etag)
+		}
+	})
 }
 
 // BenchmarkPollAfterIngest measures polling right after 10 profiles arrived.
@@ -48,7 +64,7 @@ func BenchmarkPollAfterIngest(b *testing.B) {
 			addTestProfiles(st, 10)
 		}
 		mux = buildWebUIMux(b, st, Config{})
-		pollFlamegraph(b, mux)
+		pollFlamegraph(b, mux, "")
 	}
 
 	b.ReportAllocs()
@@ -60,7 +76,7 @@ func BenchmarkPollAfterIngest(b *testing.B) {
 		addTestProfiles(st, 10)
 		b.StartTimer()
 
-		pollFlamegraph(b, mux)
+		pollFlamegraph(b, mux, "")
 	}
 	st.Close()
 }
