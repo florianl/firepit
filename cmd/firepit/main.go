@@ -505,23 +505,32 @@ func writeNamedJSON(w http.ResponseWriter, field string, items []namedJSON) {
 	w.Write(buf.Bytes())
 }
 
+// writeJSONError writes a JSON error response.
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 // writeEncodingError reports that a response could not be encoded.
 func writeEncodingError(w http.ResponseWriter, err error) {
 	slog.Error("Failed to encode response", "error", err)
-	w.WriteHeader(http.StatusInternalServerError)
-	json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
+	writeJSONError(w, http.StatusInternalServerError, "Failed to encode response")
+}
+
+// getJSON returns a handler that serves next for GET requests with a JSON content type.
+func getJSON(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		next(w, r)
+	}
 }
 
 func handleFlamegraph(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		filters := r.URL.Query()["resourceType"]
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
@@ -537,19 +546,11 @@ func handleFlamegraph(st *store.Store, agg *profiler.Aggregator, defaultVirtualF
 		}
 
 		writeNamedJSON(w, "root", graphs)
-	}
+	})
 }
 
 func handleFlamescope(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		filters := r.URL.Query()["resourceType"]
 
 		types := st.SampleTypes()
@@ -562,19 +563,11 @@ func handleFlamescope(st *store.Store) http.HandlerFunc {
 		}
 
 		json.NewEncoder(w).Encode(maps)
-	}
+	})
 }
 
 func handleProfiles(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		count, minTime, maxTime, ok := st.Stats()
 
 		info := map[string]any{
@@ -587,23 +580,15 @@ func handleProfiles(st *store.Store) http.HandlerFunc {
 		}
 
 		json.NewEncoder(w).Encode(info)
-	}
+	})
 }
 
 func handleResourceTypes(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		types := st.ResourceTypes()
 
 		json.NewEncoder(w).Encode(types)
-	}
+	})
 }
 
 // resourceAttributeValues holds the values seen for a resource attribute key.
@@ -614,15 +599,7 @@ type resourceAttributeValues struct {
 
 // handleResourceAttributes lists the filterable resource attributes grouped by key.
 func handleResourceAttributes(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		// Attributes are sorted by key
 		grouped := []resourceAttributeValues{}
 		for _, attr := range st.ResourceAttributes() {
@@ -634,57 +611,33 @@ func handleResourceAttributes(st *store.Store) http.HandlerFunc {
 		}
 
 		json.NewEncoder(w).Encode(grouped)
-	}
+	})
 }
 
 func handleAttributeKeys(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		keys := st.AttributeKeys()
 		if keys == nil {
 			keys = []string{}
 		}
 
 		json.NewEncoder(w).Encode(keys)
-	}
+	})
 }
 
 func handleConfig(cfg Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		virtualFrames := cfg.VirtualFrames
 		if virtualFrames == nil {
 			virtualFrames = []string{}
 		}
 
 		json.NewEncoder(w).Encode(map[string]any{"virtualFrames": virtualFrames})
-	}
+	})
 }
 
 func handleSandwich(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		filters := r.URL.Query()["resourceType"]
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
@@ -705,27 +658,18 @@ func handleSandwich(st *store.Store, agg *profiler.Aggregator, defaultVirtualFra
 		}
 
 		writeNamedJSON(w, "data", sandwiches)
-	}
+	})
 }
 
 func handleSandwichDetail(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-			return
-		}
-
+	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		filters := r.URL.Query()["resourceType"]
 		functionName := r.URL.Query().Get("functionName")
 		sampleType := r.URL.Query().Get("sampleType")
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		if functionName == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "functionName parameter required"})
+			writeJSONError(w, http.StatusBadRequest, "functionName parameter required")
 			return
 		}
 
@@ -748,8 +692,7 @@ func handleSandwichDetail(st *store.Store, agg *profiler.Aggregator, defaultVirt
 		}
 
 		if !foundInAnyType {
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Function not found"})
+			writeJSONError(w, http.StatusNotFound, "Function not found")
 			return
 		}
 
@@ -758,5 +701,5 @@ func handleSandwichDetail(st *store.Store, agg *profiler.Aggregator, defaultVirt
 			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
 			return
 		}
-	}
+	})
 }
