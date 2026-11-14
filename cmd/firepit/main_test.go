@@ -170,40 +170,6 @@ func TestNormalizeBasePath(t *testing.T) {
 	}
 }
 
-func TestLoadConfigBasePath(t *testing.T) {
-	tests := []struct {
-		name     string
-		env      map[string]string
-		wantPath string
-	}{
-		{"empty", map[string]string{}, ""},
-		{"set with leading slash", map[string]string{"BASE_PATH": "/firepit"}, "/firepit"},
-		{"set without leading slash", map[string]string{"BASE_PATH": "firepit"}, "/firepit"},
-		{"set with trailing slash", map[string]string{"BASE_PATH": "/firepit/"}, "/firepit"},
-		{"root slash only", map[string]string{"BASE_PATH": "/"}, ""},
-		{"invalid chars fallback to empty", map[string]string{"BASE_PATH": "/fire'pit"}, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// loadConfigFromEnv returns un-normalized paths; normalization happens in loadConfig
-			cfg := loadConfigFromEnv(func(key string) string { return tt.env[key] })
-			// Test that normalizeBasePath produces the expected output
-			normalized, err := normalizeBasePath(cfg.BasePath)
-			if tt.name == "invalid chars fallback to empty" && err == nil {
-				t.Errorf("expected error for invalid chars, got nil")
-				return
-			}
-			if tt.name != "invalid chars fallback to empty" && err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-			if normalized != tt.wantPath {
-				t.Errorf("normalized BasePath = %q, want %q", normalized, tt.wantPath)
-			}
-		})
-	}
-}
-
 func TestWebUIServerBasePath(t *testing.T) {
 	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
 	defer st.Close()
