@@ -177,9 +177,7 @@ func main() {
 	metrics := &receiver.Metrics{}
 
 	var wg sync.WaitGroup
-	var initGroup sync.WaitGroup
 	var grpcServer *grpc.Server
-	var webServer *http.Server
 	var otlpServer *http.Server
 
 	if cfg.FromFile != "" {
@@ -189,30 +187,10 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		// ingest - grpc
-		initGroup.Add(1)
-		wg.Go(func() {
-			defer initGroup.Done()
-			grpcServer = startGRPCServer(st, metrics, cfg.GRPCAddr, &wg)
-		})
-
-		// ingest - http
-		initGroup.Add(1)
-		wg.Go(func() {
-			defer initGroup.Done()
-			otlpServer = startOTLPHTTPServer(st, metrics, cfg, &wg)
-		})
+		grpcServer = startGRPCServer(st, metrics, cfg.GRPCAddr, &wg)
+		otlpServer = startOTLPHTTPServer(st, metrics, cfg, &wg)
 	}
-
-	// UI
-	initGroup.Add(1)
-	wg.Go(func() {
-		defer initGroup.Done()
-		webServer = startWebUIServer(st, metrics, cfg, &wg)
-	})
-
-	// Avoid race condition by waiting for servers to start
-	initGroup.Wait()
+	webServer := startWebUIServer(st, metrics, cfg, &wg)
 
 	<-ctx.Done()
 	slog.Info("Shutting down")
@@ -225,11 +203,9 @@ func main() {
 		grpcServer.GracefulStop()
 	}
 
-	if webServer != nil {
-		slog.Info("Stopping Web UI server")
-		if err := webServer.Shutdown(shutdownCtx); err != nil {
-			slog.Error("web server shutdown", "error", err)
-		}
+	slog.Info("Stopping Web UI server")
+	if err := webServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("web server shutdown", "error", err)
 	}
 
 	if otlpServer != nil {
