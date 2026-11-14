@@ -57,8 +57,6 @@ func (w *metricWriter) metric(name, kind, help string, value any) {
 
 // handleMetrics serves the metrics of firepit in the Prometheus text format.
 func handleMetrics(st *store.Store, recv *receiver.Metrics, started time.Time) http.HandlerFunc {
-	heapSample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
-
 	return func(rw http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(rw, "Method not allowed", http.StatusMethodNotAllowed)
@@ -93,6 +91,7 @@ func handleMetrics(st *store.Store, recv *receiver.Metrics, started time.Time) h
 		w.sample("firepit_store_profiles_removed_total", m.ExpiredProfiles, "reason", "expired")
 		w.sample("firepit_store_profiles_removed_total", m.EvictedProfiles, "reason", "evicted")
 
+		heapSample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
 		metrics.Read(heapSample)
 		w.metric("firepit_heap_objects_bytes", "gauge",
 			"Memory occupied by live and not yet collected objects on the Go heap.", heapSample[0].Value.Uint64())
