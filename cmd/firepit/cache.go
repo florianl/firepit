@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -94,7 +93,7 @@ func (c *responseCache) wrap(next http.HandlerFunc) http.HandlerFunc {
 			etag := `"` + c.id + "-" + strconv.FormatUint(generation, 36) + `"`
 			h.Set("ETag", etag)
 			h.Set("Cache-Control", "no-cache")
-			if etagMatches(r.Header.Get("If-None-Match"), etag) {
+			if matchesETag(r, etag) {
 				w.WriteHeader(http.StatusNotModified)
 				return
 			}
@@ -103,17 +102,6 @@ func (c *responseCache) wrap(next http.HandlerFunc) http.HandlerFunc {
 		w.WriteHeader(e.status)
 		w.Write(e.body)
 	}
-}
-
-// etagMatches reports whether ifNoneMatch weakly matches etag.
-func etagMatches(ifNoneMatch, etag string) bool {
-	for candidate := range strings.SplitSeq(ifNoneMatch, ",") {
-		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
-		if candidate == etag || candidate == "*" {
-			return true
-		}
-	}
-	return false
 }
 
 // responseRecorder is an http.ResponseWriter that buffers the response.
