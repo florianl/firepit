@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,228 +21,85 @@ import (
 	"github.com/florianl/firepit/internal/store"
 )
 
-func TestNewReceiver(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	r := New(st, nil)
-
-	if r == nil {
-		t.Fatal("Receiver should not be nil")
+// exportRequest returns a request with one profile and the given resource attributes.
+func exportRequest(attrs ...*commonpb.KeyValue) *collectorprofiles.ExportProfilesServiceRequest {
+	return &collectorprofiles.ExportProfilesServiceRequest{
+		ResourceProfiles: []*profilespb.ResourceProfiles{{
+			Resource: &resourcepb.Resource{Attributes: attrs},
+			ScopeProfiles: []*profilespb.ScopeProfiles{{
+				Profiles: []*profilespb.Profile{{SampleType: &profilespb.ValueType{TypeStrindex: 1}}},
+			}},
+		}},
+		Dictionary: &profilespb.ProfilesDictionary{StringTable: []string{"", "cpu"}},
 	}
 }
 
-func TestNewHTTPHandler(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024, nil)
-
-	if handler == nil {
-		t.Fatal("HTTP handler should not be nil")
+func TestHTTPHandler(t *testing.T) {
+	marshal := func(req *collectorprofiles.ExportProfilesServiceRequest) string {
+		data, err := protojson.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
 	}
-}
-
-func TestHTTPHandlerInvalidMethod(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024, nil)
-
-	req := httptest.NewRequest("GET", "/v1/profiles", nil)
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("Expected status 405, got %d", w.Code)
-	}
-}
-
-func TestHTTPHandlerEmptyBody(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024, nil)
-
-	req := httptest.NewRequest("POST", "/v1/profiles", bytes.NewReader([]byte("")))
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("Expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHTTPHandlerValidRequest(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024, nil)
-
-	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"root", "main"},
+	serviceName := &commonpb.KeyValue{
+		Key:   "service.name",
+		Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "my-service"}},
 	}
 
-	profile := &profilespb.Profile{
-		SampleType: &profilespb.ValueType{
-			TypeStrindex: 1,
-		},
-		Samples: []*profilespb.Sample{},
+	tests := []struct {
+		name          string
+		method        string
+		body          string
+		wantStatus    int
+		wantStored    int
+		wantResources []string
+	}{
+		{"GET", http.MethodGet, "", http.StatusMethodNotAllowed, 0, nil},
+		{"OPTIONS", http.MethodOptions, "", http.StatusMethodNotAllowed, 0, nil},
+		{"empty body", http.MethodPost, "", http.StatusBadRequest, 0, nil},
+		{"malformed JSON", http.MethodPost, "not json", http.StatusBadRequest, 0, nil},
+		{"valid", http.MethodPost, marshal(exportRequest()), http.StatusOK, 1, nil},
+		{"resource attributes", http.MethodPost, marshal(exportRequest(serviceName)), http.StatusOK, 1, []string{"service.name:my-service"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := store.New(10*time.Minute, time.Hour, 0)
+			defer st.Close()
 
-	rp := &profilespb.ResourceProfiles{
-		ScopeProfiles: []*profilespb.ScopeProfiles{
-			{
-				Profiles: []*profilespb.Profile{profile},
-			},
-		},
-	}
+			req := httptest.NewRequest(tt.method, "/v1/profiles", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			NewHTTPHandler(st, 32<<20, nil)(w, req)
 
-	body := &collectorprofiles.ExportProfilesServiceRequest{
-		ResourceProfiles: []*profilespb.ResourceProfiles{rp},
-		Dictionary:       dict,
-	}
-
-	data, err := protojson.Marshal(body)
-	if err != nil {
-		t.Fatalf("Failed to marshal request: %v", err)
-	}
-
-	req := httptest.NewRequest("POST", "/v1/profiles", bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
-	}
-
-	var resp collectorprofiles.ExportProfilesServiceResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
-}
-
-func TestHTTPHandlerMalformedJSON(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024, nil)
-
-	req := httptest.NewRequest("POST", "/v1/profiles", bytes.NewReader([]byte("not json")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("Expected status 400 for malformed JSON, got %d", w.Code)
-	}
-}
-
-func TestHTTPHandlerWithResourceAttributes(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024, nil)
-
-	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"root", "main", "service.name", "my-service"},
-	}
-
-	profile := &profilespb.Profile{
-		SampleType: &profilespb.ValueType{
-			TypeStrindex: 1,
-		},
-		Samples: []*profilespb.Sample{},
-	}
-
-	rp := &profilespb.ResourceProfiles{
-		Resource: &resourcepb.Resource{
-			Attributes: []*commonpb.KeyValue{
-				{
-					Key: "service.name",
-					Value: &commonpb.AnyValue{
-						Value: &commonpb.AnyValue_StringValue{StringValue: "my-service"},
-					},
-				},
-			},
-		},
-		ScopeProfiles: []*profilespb.ScopeProfiles{
-			{
-				Profiles: []*profilespb.Profile{profile},
-			},
-		},
-	}
-
-	body := &collectorprofiles.ExportProfilesServiceRequest{
-		ResourceProfiles: []*profilespb.ResourceProfiles{rp},
-		Dictionary:       dict,
-	}
-
-	data, err := protojson.Marshal(body)
-	if err != nil {
-		t.Fatalf("Failed to marshal request: %v", err)
-	}
-
-	req := httptest.NewRequest("POST", "/v1/profiles", bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", w.Code)
+			if w.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tt.wantStatus, w.Body.String())
+			}
+			if w.Code == http.StatusOK {
+				var resp collectorprofiles.ExportProfilesServiceResponse
+				if err := protojson.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+					t.Errorf("invalid response %q: %v", w.Body.String(), err)
+				}
+			}
+			if count, _, _, _ := st.Stats(); count != tt.wantStored {
+				t.Errorf("%d profiles stored, want %d", count, tt.wantStored)
+			}
+			if got := st.ResourceTypes(); !slices.Equal(got, tt.wantResources) {
+				t.Errorf("resource types = %v, want %v", got, tt.wantResources)
+			}
+		})
 	}
 }
 
 func TestGRPCReceiverProfile(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
+	st := store.New(10*time.Minute, time.Hour, 0)
 	defer st.Close()
-	receiver := New(st, nil)
 
-	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"root", "main"},
-	}
-
-	profile := &profilespb.Profile{
-		SampleType: &profilespb.ValueType{
-			TypeStrindex: 1,
-		},
-		Samples: []*profilespb.Sample{},
-	}
-
-	rp := &profilespb.ResourceProfiles{
-		ScopeProfiles: []*profilespb.ScopeProfiles{
-			{
-				Profiles: []*profilespb.Profile{profile},
-			},
-		},
-	}
-
-	req := &collectorprofiles.ExportProfilesServiceRequest{
-		ResourceProfiles: []*profilespb.ResourceProfiles{rp},
-		Dictionary:       dict,
-	}
-
-	resp, err := receiver.Export(context.Background(), req)
-	if err != nil {
+	if _, err := New(st, nil).Export(context.Background(), exportRequest()); err != nil {
 		t.Fatalf("Export failed: %v", err)
 	}
-
-	if resp == nil {
-		t.Fatal("Response should not be nil")
-	}
-}
-
-func TestHTTPHandlerOptions(t *testing.T) {
-	st := store.New(10*time.Minute, 5*time.Second, 0)
-	defer st.Close()
-	handler := NewHTTPHandler(st, 32*1024*1024, nil)
-
-	req := httptest.NewRequest("OPTIONS", "/v1/profiles", nil)
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("Expected status 405, got %d", w.Code)
+	if count, _, _, _ := st.Stats(); count != 1 {
+		t.Errorf("%d profiles stored, want 1", count)
 	}
 }
 
