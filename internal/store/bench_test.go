@@ -12,13 +12,9 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 )
 
-// benchRequest returns a request whose profiles of different services share one dictionary.
-func benchRequest(profiles int, ts time.Time) ([]*profilespb.ResourceProfiles, *profilespb.ProfilesDictionary) {
-	const (
-		numFunctions = 2000
-		numStacks    = 1500
-	)
-	rng := rand.New(rand.NewPCG(1, 2))
+// testDictionary returns a dictionary of numFunctions functions and numStacks
+// random stacks. Its attribute table holds thread.name=worker at index 1.
+func testDictionary(rng *rand.Rand, numFunctions, numStacks int) *profilespb.ProfilesDictionary {
 	dict := &profilespb.ProfilesDictionary{
 		StringTable:    []string{"", "samples", "count", "thread.name", "worker"},
 		FunctionTable:  []*profilespb.Function{{}},
@@ -27,11 +23,14 @@ func benchRequest(profiles int, ts time.Time) ([]*profilespb.ResourceProfiles, *
 		AttributeTable: []*profilespb.KeyValueAndUnit{{}, {KeyStrindex: 3, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: 4}}}},
 	}
 	for f := range numFunctions {
-		dict.StringTable = append(dict.StringTable, fmt.Sprintf("github.com/example/project/pkg%d.(*Type%d).Method%d", f%40, f%97, f))
-		dict.FunctionTable = append(dict.FunctionTable, &profilespb.Function{NameStrindex: int32(len(dict.StringTable) - 1)})
+		dict.StringTable = append(dict.StringTable,
+			fmt.Sprintf("github.com/example/project/internal/pkg%d.(*Type%d).Method%d", f%40, f%97, f),
+			fmt.Sprintf("/home/build/src/github.com/example/project/internal/pkg%d/file%d.go", f%40, f))
+		n := int32(len(dict.StringTable))
+		dict.FunctionTable = append(dict.FunctionTable, &profilespb.Function{NameStrindex: n - 2, FilenameStrindex: n - 1})
 		dict.LocationTable = append(dict.LocationTable, &profilespb.Location{
 			Address: uint64(0x400000 + 16*f),
-			Lines:   []*profilespb.Line{{FunctionIndex: int32(f + 1), Line: int64(f)}},
+			Lines:   []*profilespb.Line{{FunctionIndex: int32(f + 1), Line: int64(1 + f%500)}},
 		})
 	}
 	for range numStacks {
@@ -41,25 +40,37 @@ func benchRequest(profiles int, ts time.Time) ([]*profilespb.ResourceProfiles, *
 		}
 		dict.StackTable = append(dict.StackTable, stack)
 	}
+	return dict
+}
+
+// testProfile returns a samples(count) profile taken at ts with 300 samples
+// of the stacks of a dictionary from testDictionary.
+func testProfile(rng *rand.Rand, numStacks int, ts time.Time) *profilespb.Profile {
+	profile := &profilespb.Profile{
+		SampleType:   &profilespb.ValueType{TypeStrindex: 1, UnitStrindex: 2},
+		TimeUnixNano: uint64(ts.UnixNano()),
+	}
+	for range 300 {
+		profile.Samples = append(profile.Samples, &profilespb.Sample{
+			StackIndex:       int32(1 + rng.IntN(numStacks)),
+			AttributeIndices: []int32{1},
+			Values:           []int64{1},
+		})
+	}
+	return profile
+}
+
+// benchRequest returns a request whose profiles of different services share one dictionary.
+func benchRequest(profiles int, ts time.Time) ([]*profilespb.ResourceProfiles, *profilespb.ProfilesDictionary) {
+	const numStacks = 1500
+	rng := rand.New(rand.NewPCG(1, 2))
+	dict := testDictionary(rng, 2000, numStacks)
 
 	var rps []*profilespb.ResourceProfiles
 	for p := range profiles {
-		profile := &profilespb.Profile{
-			SampleType:   &profilespb.ValueType{TypeStrindex: 1, UnitStrindex: 2},
-			TimeUnixNano: uint64(ts.UnixNano()),
-		}
-		for range 300 {
-			profile.Samples = append(profile.Samples, &profilespb.Sample{
-				StackIndex:       int32(1 + rng.IntN(numStacks)),
-				AttributeIndices: []int32{1},
-				Values:           []int64{1},
-			})
-		}
 		rps = append(rps, &profilespb.ResourceProfiles{
-			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
-				{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: fmt.Sprintf("svc-%d", p)}}},
-			}},
-			ScopeProfiles: []*profilespb.ScopeProfiles{{Profiles: []*profilespb.Profile{profile}}},
+			Resource:      &resourcepb.Resource{Attributes: []*commonpb.KeyValue{strAttr("service.name", fmt.Sprintf("svc-%d", p))}},
+			ScopeProfiles: []*profilespb.ScopeProfiles{{Profiles: []*profilespb.Profile{testProfile(rng, numStacks, ts)}}},
 		})
 	}
 	return rps, dict

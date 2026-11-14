@@ -22,41 +22,19 @@ func sizeTestRequest() *collectorprofiles.ExportProfilesServiceRequest {
 		numProfiles  = 8
 	)
 	rng := rand.New(rand.NewPCG(1, 2))
-	strVal := func(s string) *commonpb.AnyValue {
-		return &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: s}}
-	}
-	dict := &profilespb.ProfilesDictionary{
-		StringTable:   []string{"", "samples", "count", "profile.frame.type", "thread.name"},
-		MappingTable:  []*profilespb.Mapping{{}, {MemoryStart: 0x400000, MemoryLimit: 0x800000, FilenameStrindex: 1}},
-		FunctionTable: []*profilespb.Function{{}},
-		LocationTable: []*profilespb.Location{{}},
-		StackTable:    []*profilespb.Stack{{}},
-		LinkTable:     []*profilespb.Link{{}, {TraceId: make([]byte, 16), SpanId: make([]byte, 8)}},
-		AttributeTable: []*profilespb.KeyValueAndUnit{
-			{},
-			{KeyStrindex: 3, Value: strVal("native")},
-			{KeyStrindex: 4, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: 2}}},
-		},
-	}
-	for f := range numFunctions {
-		dict.StringTable = append(dict.StringTable,
-			fmt.Sprintf("github.com/example/project/pkg%d.(*Type%d).Method%d", f%40, f%97, f),
-			fmt.Sprintf("/src/project/pkg%d/file%d.go", f%40, f))
-		n := int32(len(dict.StringTable))
-		dict.FunctionTable = append(dict.FunctionTable, &profilespb.Function{NameStrindex: n - 2, FilenameStrindex: n - 1})
-		dict.LocationTable = append(dict.LocationTable, &profilespb.Location{
-			MappingIndex:     1,
-			Address:          uint64(0x400000 + 16*f),
-			AttributeIndices: []int32{1},
-			Lines:            []*profilespb.Line{{FunctionIndex: int32(f + 1), Line: int64(1 + f%500)}},
-		})
-	}
-	for range numStacks {
-		stack := &profilespb.Stack{}
-		for range 10 + rng.IntN(50) {
-			stack.LocationIndices = append(stack.LocationIndices, int32(1+rng.IntN(numFunctions)))
-		}
-		dict.StackTable = append(dict.StackTable, stack)
+	dict := testDictionary(rng, numFunctions, numStacks)
+	dict.StringTable = append(dict.StringTable, "profile.frame.type", "native")
+	n := int32(len(dict.StringTable))
+	frameType := int32(len(dict.AttributeTable))
+	dict.AttributeTable = append(dict.AttributeTable, &profilespb.KeyValueAndUnit{
+		KeyStrindex: n - 2,
+		Value:       &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: n - 1}},
+	})
+	dict.MappingTable = []*profilespb.Mapping{{}, {MemoryStart: 0x400000, MemoryLimit: 0x800000, FilenameStrindex: 1}}
+	dict.LinkTable = []*profilespb.Link{{}, {TraceId: make([]byte, 16), SpanId: make([]byte, 8)}}
+	for _, loc := range dict.LocationTable[1:] {
+		loc.MappingIndex = 1
+		loc.AttributeIndices = []int32{frameType}
 	}
 
 	req := &collectorprofiles.ExportProfilesServiceRequest{Dictionary: dict}
@@ -71,7 +49,7 @@ func sizeTestRequest() *collectorprofiles.ExportProfilesServiceRequest {
 		for range 250 {
 			sample := &profilespb.Sample{
 				StackIndex:       int32(1 + rng.IntN(numStacks)),
-				AttributeIndices: []int32{2},
+				AttributeIndices: []int32{1},
 			}
 			if rng.IntN(2) == 0 {
 				sample.Values = []int64{int64(1 + rng.IntN(20))}
@@ -84,8 +62,8 @@ func sizeTestRequest() *collectorprofiles.ExportProfilesServiceRequest {
 		}
 		req.ResourceProfiles = append(req.ResourceProfiles, &profilespb.ResourceProfiles{
 			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
-				{Key: "service.name", Value: strVal(fmt.Sprintf("service-%d", p))},
-				{Key: "host.name", Value: strVal("host.example.com")},
+				strAttr("service.name", fmt.Sprintf("service-%d", p)),
+				strAttr("host.name", "host.example.com"),
 				{Key: "process.pid", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: int64(1000 + p)}}},
 			}},
 			ScopeProfiles: []*profilespb.ScopeProfiles{{Profiles: []*profilespb.Profile{profile}}},
