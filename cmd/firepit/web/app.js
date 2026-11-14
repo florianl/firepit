@@ -224,6 +224,9 @@ function applyFrameFilter() {
     });
 }
 
+// Frames narrower than this many pixels are not drawn. Zooming in shows them.
+const MIN_FRAME_PX = 0.7;
+
 function renderFlamegraph(containerId, data) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -240,6 +243,7 @@ function renderFlamegraph(containerId, data) {
         .width(width)
         .height(height)
         .sort(sortFn)
+        .minFrameSize(MIN_FRAME_PX)
         .setLabelHandler(function(d) {
             const samples = ('v' in d) ? d.v : d.value;
             return frameLabel(d.data.name || d.data.n || '', d.x1 - d.x0, samples, d.data.filename);
@@ -412,6 +416,18 @@ function fetchIfChanged(endpoint, onChange) {
         .catch(() => {});
 }
 
+// Renders the panels of the current view by sample type. A panel is
+// rendered once its tab is shown, as hidden ones cost as much as visible ones.
+let pendingPanels = new Map();
+
+// renderActivePanel renders the panel of the active tab if it is pending.
+function renderActivePanel() {
+    const render = pendingPanels.get(activeTab);
+    if (!render) return;
+    pendingPanels.delete(activeTab);
+    render();
+}
+
 // selectTab shows the tab and panel of the sample type.
 function selectTab(type) {
     activeTab = type;
@@ -421,6 +437,7 @@ function selectTab(type) {
     document.querySelectorAll('.tab-panel').forEach(
         p => p.classList.toggle('active', p.id === 'panel-' + sanitizeId(activeTab))
     );
+    renderActivePanel();
 }
 
 // renderTabbedView fetches a view with one tab per sample type and renders
@@ -462,6 +479,7 @@ function renderTabbedView(endpoint, query, force, { hasEntryData, renderPanel, p
             });
 
             charts.replaceChildren();
+            pendingPanels = new Map();
             entries.forEach(e => {
                 const panel = document.createElement('div');
                 const panelId = 'panel-' + sanitizeId(e.type);
@@ -470,11 +488,12 @@ function renderTabbedView(endpoint, query, force, { hasEntryData, renderPanel, p
                 charts.appendChild(panel);
 
                 if (hasEntryData(e)) {
-                    setTimeout(() => renderPanel(panelId, e), 0);
+                    pendingPanels.set(e.type, () => renderPanel(panelId, e));
                 } else {
                     panel.replaceChildren(messageElement('waiting', 'No data for ' + e.type));
                 }
             });
+            setTimeout(renderActivePanel, 0);
 
             markUpdated();
         })
