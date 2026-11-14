@@ -9,9 +9,6 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
-	"time"
-
-	"github.com/florianl/firepit/internal/store"
 )
 
 func gunzip(t *testing.T, b []byte) []byte {
@@ -205,28 +202,5 @@ func TestStaticFiles(t *testing.T) {
 	static.serve(w, req, "/app.js")
 	if w.Code != http.StatusOK || w.Body.Len() != 0 {
 		t.Errorf("HEAD: status = %d with %d bytes, want 200 without body", w.Code, w.Body.Len())
-	}
-}
-
-func TestWebUIServesBasePathInIndex(t *testing.T) {
-	st := store.New(5*time.Minute, time.Hour, 0)
-	defer st.Close()
-	mux := buildWebUIMux(t, st, Config{BasePath: "/firepit"})
-
-	for _, path := range []string{"/firepit/", "/firepit/index.html"} {
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		body := w.Body.String()
-		if w.Code != http.StatusOK || strings.Contains(body, "FIREPIT_BASE_PATH") || !strings.Contains(body, "/firepit") {
-			t.Errorf("%s: status = %d, base path not applied to index.html", path, w.Code)
-		}
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/firepit/api/config", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if enc := w.Header().Get("Content-Encoding"); enc != "gzip" {
-		t.Errorf("API response: Content-Encoding = %q, want gzip", enc)
 	}
 }

@@ -180,6 +180,9 @@ func TestWebUIServerBasePath(t *testing.T) {
 		requestPath  string
 		wantStatus   int
 		wantLocation string
+		// wantBody must be in the response body, which must not contain the placeholder.
+		wantBody string
+		gzip     bool
 	}{
 		{
 			name:        "no base path: root returns 200",
@@ -201,16 +204,25 @@ func TestWebUIServerBasePath(t *testing.T) {
 			wantLocation: "/firepit/",
 		},
 		{
-			name:        "base path: prefixed root returns 200",
+			name:        "base path: prefixed root serves index with base path",
 			basePath:    "/firepit",
 			requestPath: "/firepit/",
 			wantStatus:  http.StatusOK,
+			wantBody:    "'/firepit'",
 		},
 		{
-			name:        "base path: prefixed api route returns 200",
+			name:        "base path: index.html has base path",
+			basePath:    "/firepit",
+			requestPath: "/firepit/index.html",
+			wantStatus:  http.StatusOK,
+			wantBody:    "'/firepit'",
+		},
+		{
+			name:        "base path: prefixed api route returns gzip",
 			basePath:    "/firepit",
 			requestPath: "/firepit/api/profiles",
 			wantStatus:  http.StatusOK,
+			gzip:        true,
 		},
 		{
 			name:         "base path: unprefixed api route redirects",
@@ -227,6 +239,9 @@ func TestWebUIServerBasePath(t *testing.T) {
 			mux := buildWebUIMux(t, st, cfg)
 
 			req := httptest.NewRequest(http.MethodGet, tt.requestPath, nil)
+			if tt.gzip {
+				req.Header.Set("Accept-Encoding", "gzip")
+			}
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
 
@@ -237,6 +252,14 @@ func TestWebUIServerBasePath(t *testing.T) {
 				if loc := w.Header().Get("Location"); loc != tt.wantLocation {
 					t.Errorf("Location = %q, want %q", loc, tt.wantLocation)
 				}
+			}
+			if tt.wantBody != "" {
+				if body := w.Body.String(); !strings.Contains(body, tt.wantBody) || strings.Contains(body, "FIREPIT_BASE_PATH") {
+					t.Errorf("base path not applied to index.html")
+				}
+			}
+			if enc := w.Header().Get("Content-Encoding"); tt.gzip && enc != "gzip" {
+				t.Errorf("Content-Encoding = %q, want gzip", enc)
 			}
 		})
 	}
