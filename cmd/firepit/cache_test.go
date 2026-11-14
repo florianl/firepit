@@ -14,8 +14,8 @@ import (
 	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
 )
 
-// addTestProfiles adds the given number of profiles with 200 samples of 30 frames each to st.
-func addTestProfiles(st *store.Store, profiles int) {
+// addTestProfiles adds the given number of profiles taken at ts with 200 samples of 30 frames each to st.
+func addTestProfiles(st *store.Store, profiles int, ts time.Time) {
 	const (
 		numFunctions = 500
 		numStacks    = 300
@@ -46,7 +46,7 @@ func addTestProfiles(st *store.Store, profiles int) {
 	for range profiles {
 		profile := &profilespb.Profile{
 			SampleType:   &profilespb.ValueType{TypeStrindex: 1, UnitStrindex: 2},
-			TimeUnixNano: uint64(time.Now().UnixNano()),
+			TimeUnixNano: uint64(ts.UnixNano()),
 		}
 		for range 200 {
 			profile.Samples = append(profile.Samples, &profilespb.Sample{
@@ -62,7 +62,7 @@ func addTestProfiles(st *store.Store, profiles int) {
 func TestResponseCache(t *testing.T) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
-	addTestProfiles(st, 1)
+	addTestProfiles(st, 1, time.Now())
 
 	var calls atomic.Int32
 	inner := handleFlamegraph(st, newTestAggregator(t, st), nil)
@@ -127,7 +127,7 @@ func TestResponseCache(t *testing.T) {
 	}
 
 	// New profiles invalidate the cache.
-	addTestProfiles(st, 1)
+	addTestProfiles(st, 1, time.Now())
 	updated := get("/api/flamegraph", etag)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("status = %d after store changed, want 200", updated.Code)
@@ -163,7 +163,7 @@ func TestResponseCacheErrors(t *testing.T) {
 func TestResponseCacheConcurrent(t *testing.T) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
-	addTestProfiles(st, 1)
+	addTestProfiles(st, 1, time.Now())
 
 	var calls atomic.Int32
 	inner := handleFlamegraph(st, newTestAggregator(t, st), nil)

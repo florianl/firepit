@@ -32,7 +32,7 @@ func BenchmarkPollUnchanged(b *testing.B) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
 	for range 10 {
-		addTestProfiles(st, 10)
+		addTestProfiles(st, 10, time.Now())
 	}
 	mux := buildWebUIMux(b, st, Config{})
 	etag := pollFlamegraph(b, mux, "").Header().Get("ETag")
@@ -61,7 +61,7 @@ func BenchmarkPollAfterIngest(b *testing.B) {
 		}
 		st = store.New(5*time.Minute, time.Hour, 0)
 		for range 10 {
-			addTestProfiles(st, 10)
+			addTestProfiles(st, 10, time.Now())
 		}
 		mux = buildWebUIMux(b, st, Config{})
 		pollFlamegraph(b, mux, "")
@@ -73,7 +73,7 @@ func BenchmarkPollAfterIngest(b *testing.B) {
 		if i%10 == 0 {
 			reset()
 		}
-		addTestProfiles(st, 10)
+		addTestProfiles(st, 10, time.Now())
 		b.StartTimer()
 
 		pollFlamegraph(b, mux, "")

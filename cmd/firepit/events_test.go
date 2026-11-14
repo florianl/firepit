@@ -10,16 +10,7 @@ import (
 	"time"
 
 	"github.com/florianl/firepit/internal/store"
-	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
 )
-
-func addEventTestProfile(st *store.Store, ts time.Time) {
-	st.Add([]*profilespb.ResourceProfiles{{
-		ScopeProfiles: []*profilespb.ScopeProfiles{{
-			Profiles: []*profilespb.Profile{{TimeUnixNano: uint64(ts.UnixNano())}},
-		}},
-	}}, &profilespb.ProfilesDictionary{StringTable: []string{""}})
-}
 
 // newEventServer starts a test server streaming the events of st.
 func newEventServer(t *testing.T, st *store.Store, minInterval, heartbeat time.Duration) *httptest.Server {
@@ -103,17 +94,17 @@ func TestEventsOnStoreChanges(t *testing.T) {
 	expectEvent(t, events, "ready")
 	expectNoEvent(t, events, 150*time.Millisecond)
 
-	addEventTestProfile(st, time.Now())
+	addTestProfiles(st, 1, time.Now())
 	expectEvent(t, events, "change")
 
 	// A burst of changes is coalesced into one event.
 	for range 5 {
-		addEventTestProfile(st, time.Now())
+		addTestProfiles(st, 1, time.Now())
 	}
 	expectEvent(t, events, "change")
 	expectNoEvent(t, events, 250*time.Millisecond)
 
-	addEventTestProfile(st, time.Now().Add(-2*time.Hour))
+	addTestProfiles(st, 1, time.Now().Add(-2*time.Hour))
 	expectEvent(t, events, "change") // added
 	expectEvent(t, events, "change") // expired and removed
 	expectNoEvent(t, events, 250*time.Millisecond)
