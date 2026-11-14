@@ -214,7 +214,7 @@ func TestStaticFiles(t *testing.T) {
 func TestWebUIServesBasePathInIndex(t *testing.T) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
-	mux := buildWebUIMux(st, Config{BasePath: "/firepit"})
+	mux := buildWebUIMux(t, st, Config{BasePath: "/firepit"})
 
 	for _, path := range []string{"/firepit/", "/firepit/index.html"} {
 		w := httptest.NewRecorder()

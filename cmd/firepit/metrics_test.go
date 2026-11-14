@@ -110,7 +110,7 @@ func TestMetrics(t *testing.T) {
 func TestMetricsWithoutReceiver(t *testing.T) {
 	st := store.New(time.Hour, time.Hour, 0)
 	defer st.Close()
-	samples := scrape(t, buildWebUIMux(st, Config{BasePath: "/firepit"}), "/firepit/metrics")
+	samples := scrape(t, buildWebUIMux(t, st, Config{BasePath: "/firepit"}), "/firepit/metrics")
 	if _, ok := samples["firepit_store_profiles"]; !ok {
 		t.Error("firepit_store_profiles is missing")
 	}
@@ -142,7 +142,7 @@ func TestHealth(t *testing.T) {
 		{"/firepit", "/healthz", http.MethodGet, http.StatusOK},
 	}
 	for _, tt := range tests {
-		mux := buildWebUIMux(st, Config{BasePath: tt.basePath})
+		mux := buildWebUIMux(t, st, Config{BasePath: tt.basePath})
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, nil))
 		if w.Code != tt.want {

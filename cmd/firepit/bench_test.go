@@ -26,7 +26,7 @@ func BenchmarkPollUnchanged(b *testing.B) {
 	for range 10 {
 		addTestProfiles(st, 10)
 	}
-	mux := buildWebUIMux(st, Config{})
+	mux := buildWebUIMux(b, st, Config{})
 	pollFlamegraph(b, mux)
 
 	b.ReportAllocs()
@@ -47,7 +47,7 @@ func BenchmarkPollAfterIngest(b *testing.B) {
 		for range 10 {
 			addTestProfiles(st, 10)
 		}
-		mux = buildWebUIMux(st, Config{})
+		mux = buildWebUIMux(b, st, Config{})
 		pollFlamegraph(b, mux)
 	}
 
