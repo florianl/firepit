@@ -785,7 +785,7 @@ func TestAggregatedHandlersMatchProfiler(t *testing.T) {
 			if strings.Contains(query, "resourceType") {
 				filter = "service.name:none"
 			}
-			want := profiler.ToFlamegraph(profiler.FilterByResourceType(st.ProfileEntries("samples(count)"), filter), opts)
+			want := profiler.ToFlamegraph(profiler.FilterByResource(st.ProfileEntries("samples(count)"), []string{filter}), opts)
 
 			var graphs []profiler.NamedFlamegraph
 			get("/api/flamegraph"+query, &graphs)
