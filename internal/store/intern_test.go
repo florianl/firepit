@@ -1,7 +1,6 @@
 package store
 
 import (
-	"fmt"
 	"math/rand/v2"
 	"runtime"
 	"testing"
@@ -18,40 +17,8 @@ import (
 func internTestRequest(tb testing.TB, numFunctions int) []byte {
 	tb.Helper()
 	rng := rand.New(rand.NewPCG(1, 2))
-	dict := &profilespb.ProfilesDictionary{
-		StringTable:   []string{"", "samples", "count"},
-		FunctionTable: []*profilespb.Function{{}},
-		LocationTable: []*profilespb.Location{{}},
-		StackTable:    []*profilespb.Stack{{}},
-	}
-	for f := range numFunctions {
-		dict.StringTable = append(dict.StringTable,
-			fmt.Sprintf("github.com/example/project/internal/pkg%d.(*Type%d).Method%d", f%40, f%97, f),
-			fmt.Sprintf("/home/build/src/github.com/example/project/internal/pkg%d/file%d.go", f%40, f))
-		n := int32(len(dict.StringTable))
-		dict.FunctionTable = append(dict.FunctionTable, &profilespb.Function{NameStrindex: n - 2, FilenameStrindex: n - 1})
-		dict.LocationTable = append(dict.LocationTable, &profilespb.Location{
-			Address: uint64(0x400000 + 16*f),
-			Lines:   []*profilespb.Line{{FunctionIndex: int32(f + 1), Line: int64(1 + f%500)}},
-		})
-	}
-	for range numFunctions / 2 {
-		stack := &profilespb.Stack{}
-		for range 10 + rng.IntN(40) {
-			stack.LocationIndices = append(stack.LocationIndices, int32(1+rng.IntN(numFunctions)))
-		}
-		dict.StackTable = append(dict.StackTable, stack)
-	}
-	profile := &profilespb.Profile{
-		SampleType:   &profilespb.ValueType{TypeStrindex: 1, UnitStrindex: 2},
-		TimeUnixNano: uint64(time.Now().UnixNano()),
-	}
-	for range 300 {
-		profile.Samples = append(profile.Samples, &profilespb.Sample{
-			StackIndex: int32(1 + rng.IntN(numFunctions/2)),
-			Values:     []int64{1},
-		})
-	}
+	dict := testDictionary(rng, numFunctions, numFunctions/2)
+	profile := testProfile(rng, numFunctions/2, time.Now())
 	wire, err := proto.Marshal(&collectorprofiles.ExportProfilesServiceRequest{
 		ResourceProfiles: []*profilespb.ResourceProfiles{{
 			ScopeProfiles: []*profilespb.ScopeProfiles{{Profiles: []*profilespb.Profile{profile}}},
@@ -72,14 +39,6 @@ func addDecoded(tb testing.TB, s *Store, wire []byte) {
 		tb.Fatal(err)
 	}
 	s.Add(req.ResourceProfiles, req.Dictionary)
-}
-
-func liveHeap() uint64 {
-	runtime.GC()
-	runtime.GC()
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.HeapAlloc
 }
 
 func TestDictionariesShareStrings(t *testing.T) {
@@ -117,13 +76,13 @@ func TestInternedStringsMemory(t *testing.T) {
 	s := New(time.Hour, time.Hour, 0)
 	defer s.Close()
 
-	empty := liveHeap()
+	empty := heapInUse()
 	addDecoded(t, s, wire)
-	one := liveHeap() - empty
+	one := heapInUse() - empty
 	for range requests - 1 {
 		addDecoded(t, s, wire)
 	}
-	all := liveHeap() - empty
+	all := heapInUse() - empty
 
 	perRequest := float64(all-one) / (requests - 1)
 	t.Logf("first request: %d bytes, each further request: %.0f bytes (%.0f%%)", one, perRequest, 100*perRequest/float64(one))
@@ -136,7 +95,7 @@ func TestInternedStringsMemory(t *testing.T) {
 	clear(s.entries)
 	s.totalBytes = 0
 	s.mu.Unlock()
-	if left := int64(liveHeap()) - int64(empty); left > int64(one)/4 {
+	if left := int64(heapInUse()) - int64(empty); left > int64(one)/4 {
 		t.Errorf("%d bytes still in use after evicting all profiles", left)
 	}
 	runtime.KeepAlive(s)

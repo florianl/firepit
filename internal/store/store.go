@@ -497,28 +497,12 @@ func (s *Store) cleanup() {
 	removed := 0
 	if s.maxAge > 0 {
 		now := time.Now()
-		for typeStr, entries := range s.entries {
-			// Readers get copies, so filter in place.
-			kept := entries[:0]
-			for _, entry := range entries {
-				if now.Sub(entry.CreatedAt) < s.maxAge {
-					kept = append(kept, entry)
-				} else {
-					s.totalBytes -= entry.Size
-					s.expiredProfiles++
-				}
-			}
-			if len(kept) == len(entries) {
-				continue
-			}
-			removed += len(entries) - len(kept)
-			// Release removed profiles.
-			clear(entries[len(kept):])
-			if len(kept) > 0 {
-				s.entries[typeStr] = kept
-			} else {
-				delete(s.entries, typeStr)
-			}
+		for typeStr := range s.entries {
+			n := s.removeEntries(typeStr, func(_ int, e ProfileEntry) bool {
+				return now.Sub(e.CreatedAt) >= s.maxAge
+			})
+			s.expiredProfiles += uint64(n)
+			removed += n
 		}
 	}
 
@@ -550,6 +534,33 @@ func (s *Store) cleanup() {
 	s.attributeKeys = slices.Sorted(maps.Keys(seenAttributeKeys))
 }
 
+// removeEntries removes the entries of typeStr for which remove reports true,
+// accounts their size and returns their count. s.mu must be held.
+func (s *Store) removeEntries(typeStr string, remove func(i int, e ProfileEntry) bool) int {
+	entries := s.entries[typeStr]
+	// Readers get copies, so filter in place.
+	kept := entries[:0]
+	for i, e := range entries {
+		if remove(i, e) {
+			s.totalBytes -= e.Size
+		} else {
+			kept = append(kept, e)
+		}
+	}
+	n := len(entries) - len(kept)
+	if n == 0 {
+		return 0
+	}
+	// Release removed profiles.
+	clear(entries[len(kept):])
+	if len(kept) > 0 {
+		s.entries[typeStr] = kept
+	} else {
+		delete(s.entries, typeStr)
+	}
+	return n
+}
+
 // evictOldest removes the oldest profiles to meet the memory limit and returns their count.
 func (s *Store) evictOldest() int {
 	type ref struct {
@@ -571,8 +582,9 @@ func (s *Store) evictOldest() int {
 	// Mark first, then compact each sample type in one pass.
 	evict := make(map[string][]bool)
 	dropped := 0
+	var freed int64
 	for _, item := range all {
-		if s.totalBytes <= s.maxMemory {
+		if s.totalBytes-freed <= s.maxMemory {
 			break
 		}
 		marks := evict[item.typeStr]
@@ -581,25 +593,13 @@ func (s *Store) evictOldest() int {
 			evict[item.typeStr] = marks
 		}
 		marks[item.idx] = true
-		s.totalBytes -= item.size
+		freed += item.size
 		dropped++
 	}
 	s.evictedProfiles += uint64(dropped)
 
 	for typeStr, marks := range evict {
-		entries := s.entries[typeStr]
-		kept := entries[:0]
-		for i, e := range entries {
-			if !marks[i] {
-				kept = append(kept, e)
-			}
-		}
-		clear(entries[len(kept):])
-		if len(kept) > 0 {
-			s.entries[typeStr] = kept
-		} else {
-			delete(s.entries, typeStr)
-		}
+		s.removeEntries(typeStr, func(i int, _ ProfileEntry) bool { return marks[i] })
 	}
 
 	if dropped > 0 {
