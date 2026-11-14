@@ -45,14 +45,13 @@ func internStrings(table []string) []unique.Handle[string] {
 	return handles
 }
 
-// stringTableLookup safely looks up a string in the string table by index.
-// Returns empty string if the index is out of bounds or negative.
-func stringTableLookup(st []string, idx int32) string {
-	// Validate bounds: index must be non-negative and within string table range
-	if idx >= 0 && idx < int32(len(st)) {
-		return st[idx]
+// Lookup returns table[idx], or the zero value if idx is out of range.
+func Lookup[T any](table []T, idx int32) T {
+	if idx < 0 || int(idx) >= len(table) {
+		var zero T
+		return zero
 	}
-	return ""
+	return table[idx]
 }
 
 // ResolveKeyValue returns the key and string value of kv. References into the
@@ -66,7 +65,7 @@ func ResolveKeyValue(st []string, kv *commonpb.KeyValue) (key, value string) {
 // (key_strindex) takes precedence over the inline key.
 func ResolveKey(st []string, kv *commonpb.KeyValue) string {
 	if idx := kv.GetKeyStrindex(); idx != 0 {
-		return stringTableLookup(st, idx)
+		return Lookup(st, idx)
 	}
 	return kv.GetKey()
 }
@@ -75,7 +74,7 @@ func ResolveKey(st []string, kv *commonpb.KeyValue) string {
 // string_value_strindex against the string table if set.
 func ResolveStringValue(st []string, v *commonpb.AnyValue) string {
 	if ref, ok := v.GetValue().(*commonpb.AnyValue_StringValueStrindex); ok {
-		return stringTableLookup(st, ref.StringValueStrindex)
+		return Lookup(st, ref.StringValueStrindex)
 	}
 	return v.GetStringValue()
 }
@@ -168,11 +167,11 @@ func sampleAttributeKeys(profile *profilespb.Profile, dict *profilespb.ProfilesD
 	seen := make(map[string]bool)
 	for _, sample := range profile.Samples {
 		for _, idx := range sample.GetAttributeIndices() {
-			if seenIdx[idx] || idx < 0 || int(idx) >= len(dict.AttributeTable) {
+			if seenIdx[idx] {
 				continue
 			}
 			seenIdx[idx] = true
-			if key := stringTableLookup(dict.StringTable, dict.AttributeTable[idx].GetKeyStrindex()); key != "" {
+			if key := Lookup(dict.StringTable, Lookup(dict.AttributeTable, idx).GetKeyStrindex()); key != "" {
 				seen[key] = true
 			}
 		}
@@ -307,11 +306,11 @@ func (s *Store) Add(resourceProfiles []*profilespb.ResourceProfiles, dictionary 
 				typeStr := "unknown"
 				unitStr := ""
 				if profile.SampleType != nil {
-					typeStr = stringTableLookup(st, profile.SampleType.TypeStrindex)
+					typeStr = Lookup(st, profile.SampleType.TypeStrindex)
 					if typeStr == "" {
 						typeStr = "unknown"
 					}
-					unitStr = stringTableLookup(st, profile.SampleType.UnitStrindex)
+					unitStr = Lookup(st, profile.SampleType.UnitStrindex)
 				}
 
 				// Format key as "type(unit)"
