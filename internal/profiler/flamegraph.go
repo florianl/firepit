@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/florianl/firepit/internal/store"
-	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	profilespb "go.opentelemetry.io/proto/otlp/profiles/v1development"
 )
 
@@ -185,11 +184,6 @@ func ParseKeyList(s string) []string {
 	return keys
 }
 
-// attrValueString returns a string representation of scalar attribute values.
-func attrValueString(st []string, v *commonpb.AnyValue) string {
-	return store.ResolveValue(st, v)
-}
-
 // virtualFrameName formats the name of a virtual frame.
 func virtualFrameName(key, value string) string {
 	if value == "" {
@@ -210,7 +204,7 @@ func resourceVirtualFrames(entry store.ProfileEntry, keys []string) []FrameInfo 
 		var value string
 		for _, attr := range entry.ResourceAttributes {
 			if k := store.ResolveKey(st, attr); k == key {
-				value = attrValueString(st, attr.GetValue())
+				value = store.ResolveValue(st, attr.GetValue())
 				break
 			}
 		}
@@ -318,7 +312,7 @@ func (r *stackResolver) sampleVirtualFrames(buf []FrameInfo, sample *profilespb.
 				vf.key = slices.Index(keys, store.Lookup(r.dict.StringTable, attr.KeyStrindex))
 				if vf.key >= 0 {
 					vf.frame = FrameInfo{
-						Name:      virtualFrameName(keys[vf.key], attrValueString(r.dict.StringTable, attr.Value)),
+						Name:      virtualFrameName(keys[vf.key], store.ResolveValue(r.dict.StringTable, attr.Value)),
 						FrameType: VirtualFrameType,
 					}
 				}
