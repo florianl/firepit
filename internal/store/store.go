@@ -54,13 +54,6 @@ func Lookup[T any](table []T, idx int32) T {
 	return table[idx]
 }
 
-// ResolveKeyValue returns the key and string value of kv. References into the
-// string table (key_strindex, string_value_strindex) take precedence over the
-// inline key and string_value.
-func ResolveKeyValue(st []string, kv *commonpb.KeyValue) (key, value string) {
-	return ResolveKey(st, kv), ResolveStringValue(st, kv.GetValue())
-}
-
 // ResolveKey returns the key of kv. A reference into the string table
 // (key_strindex) takes precedence over the inline key.
 func ResolveKey(st []string, kv *commonpb.KeyValue) string {

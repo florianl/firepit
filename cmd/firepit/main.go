@@ -398,8 +398,7 @@ func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.S
 		mux.HandleFunc(prefix+"/symbol", pprof.Symbol)
 		mux.HandleFunc(prefix+"/trace", pprof.Trace)
 		// Register runtime profiles
-		for _, profile := range rpprof.Profiles() {
-			p := profile
+		for _, p := range rpprof.Profiles() {
 			mux.Handle(prefix+"/"+p.Name(), pprof.Handler(p.Name()))
 		}
 	}
