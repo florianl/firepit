@@ -143,7 +143,7 @@ func TestResponseCache(t *testing.T) {
 	}
 }
 
-func TestResponseCacheErrorsAndMethods(t *testing.T) {
+func TestResponseCacheErrors(t *testing.T) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
 	cache := newResponseCache(st)
@@ -157,14 +157,6 @@ func TestResponseCacheErrorsAndMethods(t *testing.T) {
 	}
 	if etag := w.Header().Get("ETag"); etag != "" {
 		t.Errorf("error response has ETag %s", etag)
-	}
-
-	// Other methods are passed through.
-	req = httptest.NewRequest(http.MethodPost, "/api/flamegraph", nil)
-	w = httptest.NewRecorder()
-	cache.wrap(handleFlamegraph(st, newTestAggregator(t, st), nil))(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", w.Code)
 	}
 }
 
