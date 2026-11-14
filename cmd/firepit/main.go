@@ -645,10 +645,6 @@ func handleSandwichDetail(st *store.Store, agg *profiler.Aggregator, defaultVirt
 			return
 		}
 
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encode response"})
-			return
-		}
+		json.NewEncoder(w).Encode(result)
 	})
 }
