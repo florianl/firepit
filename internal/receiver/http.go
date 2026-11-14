@@ -3,7 +3,6 @@ package receiver
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -16,23 +15,11 @@ import (
 	collectorprofiles "go.opentelemetry.io/proto/otlp/collector/profiles/v1development"
 )
 
-var (
-	requestPool = sync.Pool{
-		New: func() any {
-			return &collectorprofiles.ExportProfilesServiceRequest{}
-		},
-	}
-	responsePool = sync.Pool{
-		New: func() any {
-			return &collectorprofiles.ExportProfilesServiceResponse{}
-		},
-	}
-	gzipReaderPool = sync.Pool{
-		New: func() any {
-			return new(gzip.Reader)
-		},
-	}
-)
+var gzipReaderPool = sync.Pool{
+	New: func() any {
+		return new(gzip.Reader)
+	},
+}
 
 // errBodyTooLarge is returned if the decompressed body exceeds the size limit.
 var errBodyTooLarge = errors.New("request body too large")
@@ -108,11 +95,7 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64, metrics *Metrics) http.Ha
 			return
 		}
 
-		req := requestPool.Get().(*collectorprofiles.ExportProfilesServiceRequest)
-		defer func() {
-			req.Reset()
-			requestPool.Put(req)
-		}()
+		req := &collectorprofiles.ExportProfilesServiceRequest{}
 		if err := protojson.Unmarshal(body, req); err != nil {
 			metrics.count(invalid)
 			http.Error(w, "Failed to parse request: "+err.Error(), http.StatusBadRequest)
@@ -122,13 +105,8 @@ func NewHTTPHandler(s *store.Store, maxBodySize int64, metrics *Metrics) http.Ha
 		s.Add(req.ResourceProfiles, req.Dictionary)
 		metrics.count(accepted)
 
-		resp := responsePool.Get().(*collectorprofiles.ExportProfilesServiceResponse)
-		defer func() {
-			resp.Reset()
-			responsePool.Put(resp)
-		}()
+		// An empty ExportProfilesServiceResponse reports full success.
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		io.WriteString(w, "{}\n")
 	}
 }
