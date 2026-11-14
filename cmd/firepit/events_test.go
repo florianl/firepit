@@ -153,13 +153,3 @@ func TestEventsEndOnShutdown(t *testing.T) {
 		t.Error("event stream still open after shutdown")
 	}
 }
-
-func TestEventsMethodNotAllowed(t *testing.T) {
-	st := store.New(time.Hour, time.Hour, 0)
-	defer st.Close()
-	w := httptest.NewRecorder()
-	handleEvents(st, nil, time.Second, time.Second)(w, httptest.NewRequest(http.MethodPost, "/api/events", nil))
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", w.Code)
-	}
-}

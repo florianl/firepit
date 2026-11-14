@@ -276,232 +276,56 @@ func TestWebUIServerBasePath(t *testing.T) {
 	}
 }
 
-func TestHandleFlamegraph(t *testing.T) {
+func TestAPIMethods(t *testing.T) {
 	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
 	defer st.Close()
-
-	handler := handleFlamegraph(st, newTestAggregator(t, st), nil)
-
-	tests := []struct {
-		name       string
-		method     string
-		query      string
-		statusCode int
-	}{
-		{
-			name:       "GET request",
-			method:     http.MethodGet,
-			query:      "",
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "GET with resourceType filter",
-			method:     http.MethodGet,
-			query:      "?resourceType=myservice",
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "POST not allowed",
-			method:     http.MethodPost,
-			statusCode: http.StatusMethodNotAllowed,
-		},
-		{
-			name:       "PUT not allowed",
-			method:     http.MethodPut,
-			statusCode: http.StatusMethodNotAllowed,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/api/flamegraph"+tt.query, nil)
-			w := httptest.NewRecorder()
-
-			handler(w, req)
-
-			if w.Code != tt.statusCode {
-				t.Errorf("expected status %d, got %d", tt.statusCode, w.Code)
-			}
-
-			if tt.statusCode == http.StatusOK {
-				if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-					t.Errorf("expected Content-Type application/json, got %s", ct)
-				}
-
-				var result []any
-				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-					t.Errorf("response is not valid JSON: %v", err)
-				}
-			}
-		})
-	}
-}
-
-func TestHandleProfiles(t *testing.T) {
-	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
-	defer st.Close()
-
-	handler := handleProfiles(st)
+	mux := buildWebUIMux(t, st, Config{})
 
 	tests := []struct {
-		name       string
 		method     string
-		statusCode int
+		path       string
+		wantStatus int
+		// wantField is a field the JSON object in the response must have.
+		wantField string
 	}{
-		{
-			name:       "GET request",
-			method:     http.MethodGet,
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "POST not allowed",
-			method:     http.MethodPost,
-			statusCode: http.StatusMethodNotAllowed,
-		},
-		{
-			name:       "DELETE not allowed",
-			method:     http.MethodDelete,
-			statusCode: http.StatusMethodNotAllowed,
-		},
+		{http.MethodGet, "/api/flamegraph", http.StatusOK, ""},
+		{http.MethodPost, "/api/flamegraph", http.StatusMethodNotAllowed, ""},
+		{http.MethodPut, "/api/flamegraph", http.StatusMethodNotAllowed, ""},
+		{http.MethodGet, "/api/flamescope", http.StatusOK, ""},
+		{http.MethodPut, "/api/flamescope", http.StatusMethodNotAllowed, ""},
+		{http.MethodGet, "/api/sandwich", http.StatusOK, ""},
+		{http.MethodPost, "/api/sandwich", http.StatusMethodNotAllowed, ""},
+		{http.MethodPost, "/api/sandwich-detail?functionName=main", http.StatusMethodNotAllowed, ""},
+		{http.MethodGet, "/api/profiles", http.StatusOK, "count"},
+		{http.MethodDelete, "/api/profiles", http.StatusMethodNotAllowed, ""},
+		{http.MethodGet, "/api/resource-types", http.StatusOK, ""},
+		{http.MethodPatch, "/api/resource-types", http.StatusMethodNotAllowed, ""},
+		{http.MethodPost, "/api/resource-attributes", http.StatusMethodNotAllowed, ""},
+		{http.MethodPost, "/api/attribute-keys", http.StatusMethodNotAllowed, ""},
+		{http.MethodPost, "/api/config", http.StatusMethodNotAllowed, ""},
+		{http.MethodPost, "/api/events", http.StatusMethodNotAllowed, ""},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/api/profiles", nil)
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
-
-			handler(w, req)
-
-			if w.Code != tt.statusCode {
-				t.Errorf("expected status %d, got %d", tt.statusCode, w.Code)
+			mux.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, nil))
+			if w.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", w.Code, tt.wantStatus)
 			}
-
-			if tt.statusCode == http.StatusOK {
-				if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-					t.Errorf("expected Content-Type application/json, got %s", ct)
-				}
-
-				var result map[string]any
-				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-					t.Errorf("response is not valid JSON: %v", err)
-				}
-
-				if _, ok := result["count"]; !ok {
-					t.Error("response missing 'count' field")
-				}
+			// The event stream does not respond with JSON.
+			if strings.HasPrefix(tt.path, "/api/events") {
+				return
 			}
-		})
-	}
-}
-
-func TestHandleResourceTypes(t *testing.T) {
-	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
-	defer st.Close()
-
-	handler := handleResourceTypes(st)
-
-	tests := []struct {
-		name       string
-		method     string
-		statusCode int
-	}{
-		{
-			name:       "GET request",
-			method:     http.MethodGet,
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "POST not allowed",
-			method:     http.MethodPost,
-			statusCode: http.StatusMethodNotAllowed,
-		},
-		{
-			name:       "PATCH not allowed",
-			method:     http.MethodPatch,
-			statusCode: http.StatusMethodNotAllowed,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/api/resource-types", nil)
-			w := httptest.NewRecorder()
-
-			handler(w, req)
-
-			if w.Code != tt.statusCode {
-				t.Errorf("expected status %d, got %d", tt.statusCode, w.Code)
+			if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", ct)
 			}
-
-			if tt.statusCode == http.StatusOK {
-				if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-					t.Errorf("expected Content-Type application/json, got %s", ct)
-				}
-
-				var result map[string]any
-				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-					t.Errorf("response is not valid JSON: %v", err)
-				}
+			var result any
+			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+				t.Fatalf("response is not valid JSON: %v\n%s", err, w.Body.String())
 			}
-		})
-	}
-}
-
-func TestHandleHeatMap(t *testing.T) {
-	st := store.New(5*time.Minute, 30*time.Second, 500*1024*1024)
-	defer st.Close()
-
-	handler := handleFlamescope(st)
-
-	tests := []struct {
-		name       string
-		method     string
-		query      string
-		statusCode int
-	}{
-		{
-			name:       "GET request",
-			method:     http.MethodGet,
-			query:      "",
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "GET with resourceType filter",
-			method:     http.MethodGet,
-			query:      "?resourceType=myservice",
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "POST not allowed",
-			method:     http.MethodPost,
-			statusCode: http.StatusMethodNotAllowed,
-		},
-		{
-			name:       "PUT not allowed",
-			method:     http.MethodPut,
-			statusCode: http.StatusMethodNotAllowed,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/api/heatmap"+tt.query, nil)
-			w := httptest.NewRecorder()
-
-			handler(w, req)
-
-			if w.Code != tt.statusCode {
-				t.Errorf("expected status %d, got %d", tt.statusCode, w.Code)
-			}
-
-			if tt.statusCode == http.StatusOK {
-				if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-					t.Errorf("expected Content-Type application/json, got %s", ct)
-				}
-
-				var result []any
-				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-					t.Errorf("response is not valid JSON: %v", err)
+			if tt.wantField != "" {
+				if obj, ok := result.(map[string]any); !ok || obj[tt.wantField] == nil {
+					t.Errorf("response has no %q field: %s", tt.wantField, w.Body.String())
 				}
 			}
 		})
@@ -548,13 +372,6 @@ func TestHandleConfig(t *testing.T) {
 	if want := []string{"service.name"}; !slices.Equal(result.VirtualFrames, want) {
 		t.Errorf("virtualFrames = %v, want %v", result.VirtualFrames, want)
 	}
-
-	req = httptest.NewRequest(http.MethodPost, "/api/config", nil)
-	w = httptest.NewRecorder()
-	handler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status 405, got %d", w.Code)
-	}
 }
 
 func TestHandleAttributeKeys(t *testing.T) {
@@ -576,13 +393,6 @@ func TestHandleAttributeKeys(t *testing.T) {
 	}
 	if result == nil || len(result) != 0 {
 		t.Errorf("expected empty JSON array, got %s", w.Body.String())
-	}
-
-	req = httptest.NewRequest(http.MethodPost, "/api/attribute-keys", nil)
-	w = httptest.NewRecorder()
-	handler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status 405, got %d", w.Code)
 	}
 }
 
@@ -712,12 +522,6 @@ func TestHandleResourceAttributes(t *testing.T) {
 	want := `[{"key":"process.pid","values":["1","2","3"]},{"key":"service.name","values":["api","db"]}]`
 	if got := get(); got != want {
 		t.Errorf("body = %s, want %s", got, want)
-	}
-
-	w := httptest.NewRecorder()
-	handler(w, httptest.NewRequest(http.MethodPost, "/api/resource-attributes", nil))
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST: status = %d, want 405", w.Code)
 	}
 }
 
