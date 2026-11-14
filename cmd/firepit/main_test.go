@@ -258,7 +258,7 @@ func TestWebUIServerBasePath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{BasePath: tt.basePath}
-			mux := buildWebUIMux(st, cfg)
+			mux := buildWebUIMux(t, st, cfg)
 
 			req := httptest.NewRequest(http.MethodGet, tt.requestPath, nil)
 			w := httptest.NewRecorder()
@@ -721,6 +721,14 @@ func TestHandleResourceAttributes(t *testing.T) {
 	}
 }
 
+// buildWebUIMux returns the web UI handler without receiver metrics, released with the test.
+func buildWebUIMux(t testing.TB, st *store.Store, cfg Config) *http.ServeMux {
+	t.Helper()
+	mux, stop := buildWebUI(st, nil, cfg)
+	t.Cleanup(stop)
+	return mux
+}
+
 // newTestAggregator returns an Aggregator for st that is closed with the test.
 func newTestAggregator(t testing.TB, st *store.Store) *profiler.Aggregator {
 	t.Helper()
@@ -733,7 +741,7 @@ func newTestAggregator(t testing.TB, st *store.Store) *profiler.Aggregator {
 func TestAggregatedHandlersMatchProfiler(t *testing.T) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
-	mux := buildWebUIMux(st, Config{})
+	mux := buildWebUIMux(t, st, Config{})
 
 	get := func(path string, v any) {
 		t.Helper()
@@ -866,7 +874,7 @@ func TestWriteNamedJSON(t *testing.T) {
 func TestWebUIAssets(t *testing.T) {
 	st := store.New(5*time.Minute, time.Hour, 0)
 	defer st.Close()
-	mux := buildWebUIMux(st, Config{BasePath: "/firepit"})
+	mux := buildWebUIMux(t, st, Config{BasePath: "/firepit"})
 
 	read := func(name string) string {
 		t.Helper()

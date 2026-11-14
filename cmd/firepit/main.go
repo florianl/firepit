@@ -306,12 +306,6 @@ func newHTTPServer(addr string, handler http.Handler, timeouts serverTimeouts) *
 	}
 }
 
-// buildWebUIMux returns the web UI handler without receiver metrics.
-func buildWebUIMux(st *store.Store, cfg Config) *http.ServeMux {
-	mux, _ := buildWebUI(st, nil, cfg)
-	return mux
-}
-
 // buildWebUI returns the web UI handler and a function to release its resources.
 func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.ServeMux, func()) {
 	mux := http.NewServeMux()
