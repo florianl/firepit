@@ -142,41 +142,14 @@ type NamedSandwich struct {
 	Data *SandwichData `json:"data"`
 }
 
-// functionTableLookup safely looks up a function by index.
-// Returns nil if the index is out of bounds or negative.
-func functionTableLookup(dict *profilespb.ProfilesDictionary, idx int32) *profilespb.Function {
-	if idx < 0 || int(idx) >= len(dict.FunctionTable) {
-		return nil
-	}
-	return dict.FunctionTable[idx]
-}
-
-// stringTableLookup safely looks up a string by index.
-// Returns empty string if the index is out of bounds or negative.
-func stringTableLookup(dict *profilespb.ProfilesDictionary, idx int32) string {
-	if idx < 0 || int(idx) >= len(dict.StringTable) {
-		return ""
-	}
-	return dict.StringTable[idx]
-}
-
-// attributeTableLookup safely looks up an attribute by index.
-// Returns nil if the index is out of bounds or negative.
-func attributeTableLookup(dict *profilespb.ProfilesDictionary, idx int32) *profilespb.KeyValueAndUnit {
-	if idx < 0 || int(idx) >= len(dict.AttributeTable) {
-		return nil
-	}
-	return dict.AttributeTable[idx]
-}
-
 // frameTypeFromLocation extracts the profile.frame.type attribute from a Location.
 func frameTypeFromLocation(dict *profilespb.ProfilesDictionary, loc *profilespb.Location) string {
 	for _, attrIdx := range loc.AttributeIndices {
-		attr := attributeTableLookup(dict, attrIdx)
+		attr := store.Lookup(dict.AttributeTable, attrIdx)
 		if attr == nil || attr.Value == nil {
 			continue
 		}
-		if stringTableLookup(dict, attr.KeyStrindex) == "profile.frame.type" {
+		if store.Lookup(dict.StringTable, attr.KeyStrindex) == "profile.frame.type" {
 			return store.ResolveStringValue(dict.StringTable, attr.Value)
 		}
 	}
@@ -342,7 +315,7 @@ func (r *stackResolver) sampleVirtualFrames(buf []FrameInfo, sample *profilespb.
 		if !vf.done {
 			*vf = virtualFrame{key: -1, done: true}
 			if attr := r.dict.AttributeTable[attrIdx]; attr != nil && attr.Value != nil {
-				vf.key = slices.Index(keys, stringTableLookup(r.dict, attr.KeyStrindex))
+				vf.key = slices.Index(keys, store.Lookup(r.dict.StringTable, attr.KeyStrindex))
 				if vf.key >= 0 {
 					vf.frame = FrameInfo{
 						Name:      virtualFrameName(keys[vf.key], attrValueString(r.dict.StringTable, attr.Value)),
@@ -431,14 +404,14 @@ func (r *stackResolver) resolveLocation(idx int32) []FrameInfo {
 				continue
 			}
 
-			fn := functionTableLookup(dict, line.FunctionIndex)
+			fn := store.Lookup(dict.FunctionTable, line.FunctionIndex)
 			if fn == nil {
 				continue
 			}
 
-			name := stringTableLookup(dict, fn.NameStrindex)
+			name := store.Lookup(dict.StringTable, fn.NameStrindex)
 			if name != "" {
-				filename := stringTableLookup(dict, fn.FilenameStrindex)
+				filename := store.Lookup(dict.StringTable, fn.FilenameStrindex)
 				if line.Line != 0 {
 					filename += ":" + strconv.FormatInt(line.Line, 10)
 				}
