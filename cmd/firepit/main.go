@@ -475,24 +475,31 @@ func getJSON(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func handleFlamegraph(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
+// handlePerSampleType serves the JSON that encode returns for each sample type.
+func handlePerSampleType(st *store.Store, defaultVirtualFrames []string, field string,
+	encode func(sampleType string, filters []string, opts profiler.Options) (json.RawMessage, error),
+) http.HandlerFunc {
 	return getJSON(func(w http.ResponseWriter, r *http.Request) {
 		filters := r.URL.Query()["resourceType"]
 		opts := flamegraphOptions(r, defaultVirtualFrames)
 
 		types := st.SampleTypes()
-		graphs := make([]namedJSON, 0, len(types))
+		items := make([]namedJSON, 0, len(types))
 		for _, t := range types {
-			root, err := agg.FlamegraphJSON(t, filters, opts)
+			data, err := encode(t, filters, opts)
 			if err != nil {
 				writeEncodingError(w, err)
 				return
 			}
-			graphs = append(graphs, namedJSON{t, root})
+			items = append(items, namedJSON{t, data})
 		}
 
-		writeNamedJSON(w, "root", graphs)
+		writeNamedJSON(w, field, items)
 	})
+}
+
+func handleFlamegraph(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
+	return handlePerSampleType(st, defaultVirtualFrames, "root", agg.FlamegraphJSON)
 }
 
 func handleFlamescope(st *store.Store) http.HandlerFunc {
@@ -575,28 +582,14 @@ func handleConfig(cfg Config) http.HandlerFunc {
 }
 
 func handleSandwich(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
-	return getJSON(func(w http.ResponseWriter, r *http.Request) {
-		filters := r.URL.Query()["resourceType"]
-		opts := flamegraphOptions(r, defaultVirtualFrames)
-
-		types := st.SampleTypes()
-		sandwiches := make([]namedJSON, 0, len(types))
-		for _, t := range types {
-			var data json.RawMessage
-			var err error
+	return handlePerSampleType(st, defaultVirtualFrames, "data",
+		func(sampleType string, filters []string, opts profiler.Options) (data json.RawMessage, err error) {
 			// root is only valid within the callback.
-			agg.WithFlamegraph(t, filters, opts, func(root *profiler.FlameNode) {
+			agg.WithFlamegraph(sampleType, filters, opts, func(root *profiler.FlameNode) {
 				data, err = json.Marshal(profiler.ToSandwich(root))
 			})
-			if err != nil {
-				writeEncodingError(w, err)
-				return
-			}
-			sandwiches = append(sandwiches, namedJSON{t, data})
-		}
-
-		writeNamedJSON(w, "data", sandwiches)
-	})
+			return data, err
+		})
 }
 
 func handleSandwichDetail(st *store.Store, agg *profiler.Aggregator, defaultVirtualFrames []string) http.HandlerFunc {
