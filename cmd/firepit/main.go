@@ -117,62 +117,42 @@ func loadConfigFromEnv(getenv func(string) string) Config {
 		MaxStorageBytes: 500 * 1024 * 1024, // 500 MB
 	}
 
-	// Read from environment variables
-	if addr := getenv("GRPC_ADDR"); addr != "" {
-		cfg.GRPCAddr = addr
-	}
-	if addr := getenv("HTTP_ADDR"); addr != "" {
-		cfg.HTTPAddr = addr
-	}
-	if addr := getenv("WEB_ADDR"); addr != "" {
-		cfg.WebAddr = addr
-	}
+	parseEnv(getenv, "GRPC_ADDR", parseString, &cfg.GRPCAddr)
+	parseEnv(getenv, "HTTP_ADDR", parseString, &cfg.HTTPAddr)
+	parseEnv(getenv, "WEB_ADDR", parseString, &cfg.WebAddr)
+	parseEnv(getenv, "PROFILE_TTL", time.ParseDuration, &cfg.ProfileTTL)
+	parseEnv(getenv, "CLEANUP_INTERVAL", time.ParseDuration, &cfg.CleanupInterval)
+	parseEnv(getenv, "MAX_BODY_SIZE", parseInt64, &cfg.MaxBodySize)
+	parseEnv(getenv, "MAX_STORAGE_BYTES", parseInt64, &cfg.MaxStorageBytes)
 
-	if ttl := getenv("PROFILE_TTL"); ttl != "" {
-		if d, err := time.ParseDuration(ttl); err == nil {
-			cfg.ProfileTTL = d
-		} else {
-			slog.Warn("Invalid PROFILE_TTL", "error", err)
-		}
-	}
-
-	if interval := getenv("CLEANUP_INTERVAL"); interval != "" {
-		if d, err := time.ParseDuration(interval); err == nil {
-			cfg.CleanupInterval = d
-		} else {
-			slog.Warn("Invalid CLEANUP_INTERVAL", "error", err)
-		}
-	}
-
-	if size := getenv("MAX_BODY_SIZE"); size != "" {
-		if s, err := strconv.ParseInt(size, 10, 64); err == nil {
-			cfg.MaxBodySize = s
-		} else {
-			slog.Warn("Invalid MAX_BODY_SIZE", "error", err)
-		}
-	}
-
-	if size := getenv("MAX_STORAGE_BYTES"); size != "" {
-		if s, err := strconv.ParseInt(size, 10, 64); err == nil {
-			cfg.MaxStorageBytes = s
-		} else {
-			slog.Warn("Invalid MAX_STORAGE_BYTES", "error", err)
-		}
-	}
-
-	if bp := getenv("BASE_PATH"); bp != "" {
-		cfg.BasePath = bp
-	}
-
-	if ff := getenv("FROM_FILE"); ff != "" {
-		cfg.FromFile = ff
-	}
-
+	parseEnv(getenv, "BASE_PATH", parseString, &cfg.BasePath)
+	parseEnv(getenv, "FROM_FILE", parseString, &cfg.FromFile)
 	if vf := getenv("VIRTUAL_FRAMES"); vf != "" {
 		cfg.VirtualFrames = profiler.ParseKeyList(vf)
 	}
 
 	return cfg
+}
+
+// parseEnv sets dst to the parsed value of the environment variable name if
+// it is set and valid.
+func parseEnv[T any](getenv func(string) string, name string, parse func(string) (T, error), dst *T) {
+	v := getenv(name)
+	if v == "" {
+		return
+	}
+	parsed, err := parse(v)
+	if err != nil {
+		slog.Warn("Invalid "+name, "error", err)
+		return
+	}
+	*dst = parsed
+}
+
+func parseString(s string) (string, error) { return s, nil }
+
+func parseInt64(s string) (int64, error) {
+	return strconv.ParseInt(s, 10, 64)
 }
 
 func main() {
