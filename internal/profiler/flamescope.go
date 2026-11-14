@@ -30,7 +30,6 @@ func ToHeatMap(entries []store.ProfileEntry) HeatMapData {
 		return HeatMapData{}
 	}
 
-	// First pass: find min/max TimeUnixNano
 	var minT, maxT uint64
 	hasValidTime := false
 	extend := func(ts uint64) {
@@ -69,7 +68,6 @@ func ToHeatMap(entries []store.ProfileEntry) HeatMapData {
 		return &cells[x*numSubBuckets+y]
 	}
 
-	// Second pass: fill cells
 	for _, entry := range entries {
 		if entry.Profile == nil {
 			continue

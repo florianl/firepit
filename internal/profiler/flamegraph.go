@@ -388,7 +388,7 @@ func (r *stackResolver) resolveLocation(idx int32) []FrameInfo {
 		frameType := frameTypeFromLocation(dict, loc)
 
 		if len(loc.Lines) == 0 {
-			// Location has no line info; use address as fallback
+			// Without line info, fall back to the address.
 			r.locArena = append(r.locArena, FrameInfo{Name: "[0x" + strconv.FormatUint(loc.Address, 16) + "]", FrameType: frameType})
 		}
 
@@ -497,25 +497,23 @@ func ToSandwich(root *FlameNode) *SandwichData {
 	}
 }
 
-// SandwichGraphs holds caller and callee flamegraphs for a target function
+// SandwichGraphs holds the caller and callee flame graphs of a function.
 type SandwichGraphs struct {
 	Callers *FlameNode `json:"callers"`
 	Callees *FlameNode `json:"callees"`
 }
 
-// ExtractSandwichGraphs builds separate caller and callee flamegraphs for a target function
+// ExtractSandwichGraphs returns the caller and callee flame graphs of targetName.
 func ExtractSandwichGraphs(root *FlameNode, targetName string) *SandwichGraphs {
 	if root == nil || targetName == "" {
 		return &SandwichGraphs{}
 	}
 
-	// Build caller flamegraph with target as root, showing who calls it
 	callersGraph := buildCallerGraph(root, targetName)
 	if callersGraph == nil {
 		return &SandwichGraphs{}
 	}
 
-	// Build callee flamegraph with target as root, showing what it calls
 	calleeGraph := buildCalleeGraph(root, targetName)
 
 	return &SandwichGraphs{
@@ -551,7 +549,6 @@ func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 		}
 	}
 
-	// Skip the artificial root node
 	for _, child := range originalRoot.Children {
 		walk(child, nil)
 	}
