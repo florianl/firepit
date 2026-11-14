@@ -573,7 +573,7 @@ func TestAggregatedHandlersMatchProfiler(t *testing.T) {
 	}
 
 	for round := range 3 {
-		addTestProfiles(st, 2)
+		addTestProfiles(st, 2, time.Now())
 
 		for _, query := range []string{"", "?virtualFrames=service.name", "?resourceType=service.name:none"} {
 			opts := profiler.Options{}
