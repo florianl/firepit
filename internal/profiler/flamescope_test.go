@@ -8,206 +8,96 @@ import (
 	"github.com/florianl/firepit/internal/store"
 )
 
-func TestToHeatMapEmpty(t *testing.T) {
-	entries := []store.ProfileEntry{}
-	hm := ToHeatMap(entries)
-
-	if hm.NumSeconds != 0 {
-		t.Fatalf("Expected empty heatmap, got NumSeconds=%d", hm.NumSeconds)
-	}
-}
-
-func TestToHeatMapSingleEntryValues(t *testing.T) {
-	// Profile with TimeUnixNano=1000000000000 and one sample with Values=[5]
-	profile := &profilespb.Profile{
-		TimeUnixNano: 1_000_000_000_000,
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex: 0,
-				Values:     []int64{5},
-			},
-		},
-	}
-
-	entry := store.ProfileEntry{
-		Profile:    profile,
+// heatMapEntry returns an entry for a profile at time t with the given samples.
+func heatMapEntry(t uint64, samples ...*profilespb.Sample) store.ProfileEntry {
+	return store.ProfileEntry{
+		Profile:    &profilespb.Profile{TimeUnixNano: t, Samples: samples},
 		Dictionary: &profilespb.ProfilesDictionary{},
 	}
-
-	hm := ToHeatMap([]store.ProfileEntry{entry})
-
-	if hm.NumSeconds != 1 {
-		t.Fatalf("Expected NumSeconds=1, got %d", hm.NumSeconds)
-	}
-
-	if hm.MaxValue != 5 {
-		t.Fatalf("Expected MaxValue=5, got %d", hm.MaxValue)
-	}
-
-	if len(hm.Cells) != 100 {
-		t.Fatalf("Expected 100 cells, got %d", len(hm.Cells))
-	}
-
-	// The sample should fall into the first bucket (xi=0, yi=0 since TimeUnixNano % 1e9 = 0)
-	if hm.Cells[0] != 5 {
-		t.Fatalf("Expected cells[0]=5, got %d", hm.Cells[0])
-	}
 }
 
-func TestToHeatMapWithTimestamps(t *testing.T) {
-	// Profile with timestamps spanning two seconds
-	baseTime := uint64(1_000_000_000_000)
-	profile := &profilespb.Profile{
-		TimeUnixNano: baseTime,
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex: 0,
-				TimestampsUnixNano: []uint64{
-					baseTime + 500_000_000,   // 0.5 seconds in
-					baseTime + 1_500_000_000, // 1.5 seconds in
-				},
+func TestToHeatMap(t *testing.T) {
+	const base = uint64(1_000_000_000_000)
+
+	tests := []struct {
+		name       string
+		entries    []store.ProfileEntry
+		numSeconds int
+		maxValue   int64
+		// cells maps cell index (second*numSubBuckets + bucket) to its value
+		cells map[int]int64
+	}{
+		{
+			name: "empty",
+		},
+		{
+			name:       "single entry values",
+			entries:    []store.ProfileEntry{heatMapEntry(base, &profilespb.Sample{Values: []int64{5}})},
+			numSeconds: 1,
+			maxValue:   5,
+			cells:      map[int]int64{0: 5},
+		},
+		{
+			name: "timestamps",
+			entries: []store.ProfileEntry{heatMapEntry(base, &profilespb.Sample{
+				TimestampsUnixNano: []uint64{base + 500_000_000, base + 1_500_000_000},
+			})},
+			numSeconds: 2,
+			maxValue:   1,
+			cells:      map[int]int64{50: 1, numSubBuckets + 50: 1},
+		},
+		{
+			name: "max value",
+			entries: []store.ProfileEntry{
+				heatMapEntry(base, &profilespb.Sample{Values: []int64{10}}),
+				heatMapEntry(base+100_000_000, &profilespb.Sample{Values: []int64{25}}),
 			},
+			numSeconds: 1,
+			maxValue:   25,
+			cells:      map[int]int64{0: 10, 10: 25},
+		},
+		{
+			name:    "zero profile time is skipped",
+			entries: []store.ProfileEntry{heatMapEntry(0, &profilespb.Sample{Values: []int64{5}})},
+		},
+		{
+			name: "values and timestamps",
+			entries: []store.ProfileEntry{
+				heatMapEntry(base, &profilespb.Sample{Values: []int64{5}}),
+				heatMapEntry(base+1_000_000_000, &profilespb.Sample{
+					TimestampsUnixNano: []uint64{base + 1_500_000_000},
+				}),
+			},
+			numSeconds: 2,
+			maxValue:   5,
+			cells:      map[int]int64{0: 5, numSubBuckets + 50: 1},
+		},
+		{
+			name: "timestamps of a profile without time",
+			entries: []store.ProfileEntry{
+				heatMapEntry(base, &profilespb.Sample{Values: []int64{5}}),
+				heatMapEntry(0, &profilespb.Sample{TimestampsUnixNano: []uint64{base - 1_500_000_000}}),
+			},
+			numSeconds: 2,
+			maxValue:   5,
+			cells:      map[int]int64{50: 1, numSubBuckets: 5},
 		},
 	}
-
-	entry := store.ProfileEntry{
-		Profile:    profile,
-		Dictionary: &profilespb.ProfilesDictionary{},
-	}
-
-	hm := ToHeatMap([]store.ProfileEntry{entry})
-
-	if hm.NumSeconds != 2 {
-		t.Fatalf("Expected NumSeconds=2, got %d", hm.NumSeconds)
-	}
-
-	if hm.MaxValue != 1 {
-		t.Fatalf("Expected MaxValue=1, got %d", hm.MaxValue)
-	}
-
-	// First timestamp: xi=0 (first second), yi=50 (500ms / 10ms per bucket)
-	xi0Yi50 := 0*numSubBuckets + 50
-	// Second timestamp: xi=1 (second second), yi=50 (500ms / 10ms per bucket)
-	xi1Yi50 := 1*numSubBuckets + 50
-
-	if hm.Cells[xi0Yi50] != 1 {
-		t.Fatalf("Expected cells[0*100+50]=1, got %d", hm.Cells[xi0Yi50])
-	}
-
-	if hm.Cells[xi1Yi50] != 1 {
-		t.Fatalf("Expected cells[1*100+50]=1, got %d", hm.Cells[xi1Yi50])
-	}
-}
-
-func TestToHeatMapMaxValue(t *testing.T) {
-	baseTime := uint64(1_000_000_000_000)
-
-	// First entry: 10 samples
-	profile1 := &profilespb.Profile{
-		TimeUnixNano: baseTime,
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex: 0,
-				Values:     []int64{10},
-			},
-		},
-	}
-
-	// Second entry: 25 samples
-	profile2 := &profilespb.Profile{
-		TimeUnixNano: baseTime + 100_000_000,
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex: 0,
-				Values:     []int64{25},
-			},
-		},
-	}
-
-	entries := []store.ProfileEntry{
-		{Profile: profile1, Dictionary: &profilespb.ProfilesDictionary{}},
-		{Profile: profile2, Dictionary: &profilespb.ProfilesDictionary{}},
-	}
-
-	hm := ToHeatMap(entries)
-
-	if hm.MaxValue != 25 {
-		t.Fatalf("Expected MaxValue=25, got %d", hm.MaxValue)
-	}
-}
-
-func TestToHeatMapZeroTimeUnixNano(t *testing.T) {
-	// Profile with zero TimeUnixNano and no timestamps - should be skipped
-	profile := &profilespb.Profile{
-		TimeUnixNano: 0,
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex: 0,
-				Values:     []int64{5},
-			},
-		},
-	}
-
-	entry := store.ProfileEntry{
-		Profile:    profile,
-		Dictionary: &profilespb.ProfilesDictionary{},
-	}
-
-	hm := ToHeatMap([]store.ProfileEntry{entry})
-
-	if hm.NumSeconds != 0 {
-		t.Fatalf("Expected empty heatmap for zero TimeUnixNano, got NumSeconds=%d", hm.NumSeconds)
-	}
-}
-
-func TestToHeatMapMixedScenarios(t *testing.T) {
-	baseTime := uint64(2_000_000_000_000)
-
-	// Profile with TimeUnixNano + Values
-	profile1 := &profilespb.Profile{
-		TimeUnixNano: baseTime,
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex: 0,
-				Values:     []int64{5},
-			},
-		},
-	}
-
-	// Profile with timestamps
-	profile2 := &profilespb.Profile{
-		TimeUnixNano: baseTime + 1_000_000_000,
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex:         0,
-				TimestampsUnixNano: []uint64{baseTime + 1_500_000_000},
-			},
-		},
-	}
-
-	entries := []store.ProfileEntry{
-		{Profile: profile1, Dictionary: &profilespb.ProfilesDictionary{}},
-		{Profile: profile2, Dictionary: &profilespb.ProfilesDictionary{}},
-	}
-
-	hm := ToHeatMap(entries)
-
-	if hm.NumSeconds != 2 {
-		t.Fatalf("Expected NumSeconds=2, got %d", hm.NumSeconds)
-	}
-
-	if hm.MaxValue != 5 {
-		t.Fatalf("Expected MaxValue=5, got %d", hm.MaxValue)
-	}
-
-	// First second, bucket 0: value 5
-	if hm.Cells[0] != 5 {
-		t.Fatalf("Expected cells[0]=5, got %d", hm.Cells[0])
-	}
-
-	// Second second, bucket 50: value 1
-	xi1Yi50 := 1*numSubBuckets + 50
-	if hm.Cells[xi1Yi50] != 1 {
-		t.Fatalf("Expected cells[1*100+50]=1, got %d", hm.Cells[xi1Yi50])
+	for _, tt := range tests {
+		hm := ToHeatMap(tt.entries)
+		if hm.NumSeconds != tt.numSeconds || hm.MaxValue != tt.maxValue {
+			t.Errorf("%s: NumSeconds=%d MaxValue=%d, want %d %d",
+				tt.name, hm.NumSeconds, hm.MaxValue, tt.numSeconds, tt.maxValue)
+			continue
+		}
+		if len(hm.Cells) != tt.numSeconds*numSubBuckets {
+			t.Errorf("%s: %d cells, want %d", tt.name, len(hm.Cells), tt.numSeconds*numSubBuckets)
+			continue
+		}
+		for i, c := range hm.Cells {
+			if c != tt.cells[i] {
+				t.Errorf("%s: cells[%d]=%d, want %d", tt.name, i, c, tt.cells[i])
+			}
+		}
 	}
 }

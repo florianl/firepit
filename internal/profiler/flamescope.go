@@ -33,43 +33,25 @@ func ToHeatMap(entries []store.ProfileEntry) HeatMapData {
 	// First pass: find min/max TimeUnixNano
 	var minT, maxT uint64
 	hasValidTime := false
+	extend := func(ts uint64) {
+		if !hasValidTime {
+			minT, maxT, hasValidTime = ts, ts, true
+			return
+		}
+		minT = min(ts, minT)
+		maxT = max(ts, maxT)
+	}
 
 	for _, entry := range entries {
 		if entry.Profile == nil {
 			continue
 		}
-
-		// Check Profile.TimeUnixNano
-		if entry.Profile.TimeUnixNano == 0 {
-			continue
+		if t := entry.Profile.TimeUnixNano; t != 0 {
+			extend(t)
 		}
-		if !hasValidTime {
-			minT = entry.Profile.TimeUnixNano
-			maxT = entry.Profile.TimeUnixNano
-			hasValidTime = true
-		} else {
-			minT = min(entry.Profile.TimeUnixNano, minT)
-			maxT = max(entry.Profile.TimeUnixNano, maxT)
-		}
-
-		// Check Sample.TimestampsUnixNano
 		for _, sample := range entry.Profile.Samples {
-			if sample == nil {
-				continue
-			}
-			for _, ts := range sample.TimestampsUnixNano {
-				if !hasValidTime {
-					minT = ts
-					maxT = ts
-					hasValidTime = true
-				} else {
-					if ts < minT {
-						minT = ts
-					}
-					if ts > maxT {
-						maxT = ts
-					}
-				}
+			for _, ts := range sample.GetTimestampsUnixNano() {
+				extend(ts)
 			}
 		}
 	}
@@ -78,68 +60,30 @@ func ToHeatMap(entries []store.ProfileEntry) HeatMapData {
 		return HeatMapData{}
 	}
 
-	// Calculate number of seconds
 	numSeconds := min(int((maxT-minT)/1_000_000_000)+1, 3600)
-
-	// Allocate cells array
 	cells := make([]int64, numSeconds*numSubBuckets)
+	cell := func(ts uint64) *int64 {
+		// Timestamps beyond the capped range go into the last column.
+		x := min(int((ts-minT)/1_000_000_000), numSeconds-1)
+		y := int((ts % 1_000_000_000) / subBucketNanos)
+		return &cells[x*numSubBuckets+y]
+	}
 
 	// Second pass: fill cells
 	for _, entry := range entries {
 		if entry.Profile == nil {
 			continue
 		}
-
 		for _, sample := range entry.Profile.Samples {
 			if sample == nil {
 				continue
 			}
-
-			// Scenario A: has TimestampsUnixNano
 			if len(sample.TimestampsUnixNano) > 0 {
 				for _, ts := range sample.TimestampsUnixNano {
-					xIdx := int((ts - minT) / 1_000_000_000)
-					yIdx := int((ts % 1_000_000_000) / subBucketNanos)
-
-					// Clamp to valid range
-					if xIdx < 0 {
-						xIdx = 0
-					}
-					if xIdx >= numSeconds {
-						xIdx = numSeconds - 1
-					}
-					if yIdx < 0 {
-						yIdx = 0
-					}
-					if yIdx >= numSubBuckets {
-						yIdx = numSubBuckets - 1
-					}
-
-					cells[xIdx*numSubBuckets+yIdx]++
+					*cell(ts)++
 				}
-			} else if len(sample.Values) > 0 && sample.Values[0] > 0 {
-				// Scenario B: only Values, use Profile.TimeUnixNano
-				if entry.Profile.TimeUnixNano > 0 {
-					ts := entry.Profile.TimeUnixNano
-					xIdx := int((ts - minT) / 1_000_000_000)
-					yIdx := int((ts % 1_000_000_000) / subBucketNanos)
-
-					// Clamp to valid range
-					if xIdx < 0 {
-						xIdx = 0
-					}
-					if xIdx >= numSeconds {
-						xIdx = numSeconds - 1
-					}
-					if yIdx < 0 {
-						yIdx = 0
-					}
-					if yIdx >= numSubBuckets {
-						yIdx = numSubBuckets - 1
-					}
-
-					cells[xIdx*numSubBuckets+yIdx] += sample.Values[0]
-				}
+			} else if len(sample.Values) > 0 && sample.Values[0] > 0 && entry.Profile.TimeUnixNano > 0 {
+				*cell(entry.Profile.TimeUnixNano) += sample.Values[0]
 			}
 		}
 	}

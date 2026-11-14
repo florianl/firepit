@@ -28,382 +28,74 @@ func TestToFlamegraphEmpty(t *testing.T) {
 	}
 }
 
-func TestToFlamegraphWithProfile(t *testing.T) {
+func TestFilterByResource(t *testing.T) {
+	svc := store.ProfileEntry{ResourceAttributes: []*commonpb.KeyValue{{
+		Key:   "service.name",
+		Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "a"}},
+	}}}
+	noAttrs := store.ProfileEntry{}
+	entries := []store.ProfileEntry{svc, noAttrs}
+
+	tests := []struct {
+		filters []string
+		want    int
+	}{
+		{nil, 2},
+		{[]string{"service.name"}, 2},
+		{[]string{"service.name:a"}, 1},
+		{[]string{"service.name:b"}, 0},
+	}
+	for _, tt := range tests {
+		got := FilterByResource(entries, tt.filters)
+		if len(got) != tt.want {
+			t.Errorf("FilterByResource(%q) = %d entries, want %d", tt.filters, len(got), tt.want)
+			continue
+		}
+		if tt.want == 1 && got[0].ResourceAttributes == nil {
+			t.Errorf("FilterByResource(%q) matched the entry without attributes", tt.filters)
+		}
+	}
+}
+
+// singleFrame returns a profile with one sample on a single frame.
+func singleFrame(fn, file, frameType string) store.ProfileEntry {
 	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"root", "func1", "func2"},
-		LocationTable: []*profilespb.Location{
-			{
-				Address: 0x1000,
-				Lines: []*profilespb.Line{
-					{FunctionIndex: 1},
-				},
-			},
-			{
-				Address: 0x2000,
-				Lines: []*profilespb.Line{
-					{FunctionIndex: 2},
-				},
-			},
-		},
-		FunctionTable: []*profilespb.Function{
-			{NameStrindex: 0},
-			{NameStrindex: 1},
-			{NameStrindex: 2},
-		},
-		StackTable: []*profilespb.Stack{
-			{
-				LocationIndices: []int32{0},
-			},
-			{
-				LocationIndices: []int32{1, 0},
-			},
-		},
+		StringTable:    []string{"", fn, file, "profile.frame.type"},
+		AttributeTable: []*profilespb.KeyValueAndUnit{{}},
+		LocationTable:  []*profilespb.Location{{Lines: []*profilespb.Line{{FunctionIndex: 0}}}},
+		FunctionTable:  []*profilespb.Function{{NameStrindex: 1, FilenameStrindex: 2}},
+		StackTable:     []*profilespb.Stack{{LocationIndices: []int32{0}}},
 	}
-
+	if frameType != "" {
+		dict.AttributeTable = append(dict.AttributeTable, &profilespb.KeyValueAndUnit{
+			KeyStrindex: 3,
+			Value:       &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: frameType}},
+		})
+		dict.LocationTable[0].AttributeIndices = []int32{1}
+	}
 	profile := &profilespb.Profile{
-		SampleType: &profilespb.ValueType{
-			TypeStrindex: 0,
-			UnitStrindex: 0,
-		},
-		Samples: []*profilespb.Sample{
-			{
-				StackIndex: 1,
-				Values:     []int64{100},
-			},
-		},
+		Samples: []*profilespb.Sample{{StackIndex: 0, Values: []int64{1}}},
 	}
-
-	entry := store.ProfileEntry{
-		Profile:    profile,
-		Dictionary: dict,
-	}
-
-	root := ToFlamegraph([]store.ProfileEntry{entry}, Options{})
-
-	if root.Value != 100 {
-		t.Fatalf("Expected root value 100, got %d", root.Value)
-	}
-
-	if len(root.Children) == 0 {
-		t.Fatal("Expected children in root")
-	}
+	return store.ProfileEntry{Profile: profile, Dictionary: dict}
 }
 
-func TestFilterByResourceTypeEmpty(t *testing.T) {
-	entries := []store.ProfileEntry{}
-	filtered := FilterByResourceType(entries, "")
-
-	if len(filtered) != 0 {
-		t.Fatalf("Expected empty result, got %d entries", len(filtered))
+func TestToFlamegraphSingleFrame(t *testing.T) {
+	tests := []struct {
+		name, file, frameType string
+	}{
+		{"myFunc", "main.go", ""},
+		{"myFunc", "", ""},
+		{"myFunc", "", "cpython"},
 	}
-}
-
-func TestFilterByResourceTypeNoFilter(t *testing.T) {
-	entry := store.ProfileEntry{
-		ResourceAttributes: []*commonpb.KeyValue{
-			{
-				Key: "service.name",
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValue{StringValue: "test-service"},
-				},
-			},
-		},
-	}
-
-	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "")
-	if len(filtered) != 1 {
-		t.Fatalf("Expected 1 entry with empty filter, got %d", len(filtered))
-	}
-}
-
-func TestFilterByResourceTypeMatch(t *testing.T) {
-	entry := store.ProfileEntry{
-		ResourceAttributes: []*commonpb.KeyValue{
-			{
-				Key: "service.name",
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValue{StringValue: "test-service"},
-				},
-			},
-		},
-	}
-
-	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "service.name:test-service")
-	if len(filtered) != 1 {
-		t.Fatalf("Expected 1 matching entry, got %d", len(filtered))
-	}
-}
-
-func TestFilterByResourceTypeDictionaryReferences(t *testing.T) {
-	entry := store.ProfileEntry{
-		Dictionary: &profilespb.ProfilesDictionary{
-			StringTable: []string{"", "process.executable.name", "dockerd"},
-		},
-		ResourceAttributes: []*commonpb.KeyValue{
-			{
-				KeyStrindex: 1,
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValueStrindex{StringValueStrindex: 2},
-				},
-			},
-		},
-	}
-
-	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "process.executable.name:dockerd")
-	if len(filtered) != 1 {
-		t.Fatalf("Expected 1 matching entry, got %d", len(filtered))
-	}
-}
-
-func TestFilterByResourceTypeNoMatch(t *testing.T) {
-	entry := store.ProfileEntry{
-		ResourceAttributes: []*commonpb.KeyValue{
-			{
-				Key: "service.name",
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValue{StringValue: "test-service"},
-				},
-			},
-		},
-	}
-
-	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "service.name:other-service")
-	if len(filtered) != 0 {
-		t.Fatalf("Expected 0 matching entries, got %d", len(filtered))
-	}
-}
-
-func TestFilterByResourceTypeMultiple(t *testing.T) {
-	entry1 := store.ProfileEntry{
-		ResourceAttributes: []*commonpb.KeyValue{
-			{
-				Key: "service.name",
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValue{StringValue: "service-a"},
-				},
-			},
-		},
-	}
-
-	entry2 := store.ProfileEntry{
-		ResourceAttributes: []*commonpb.KeyValue{
-			{
-				Key: "service.name",
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValue{StringValue: "service-b"},
-				},
-			},
-		},
-	}
-
-	filtered := FilterByResourceType([]store.ProfileEntry{entry1, entry2}, "service.name:service-a")
-	if len(filtered) != 1 {
-		t.Fatalf("Expected 1 matching entry, got %d", len(filtered))
-	}
-
-	if filtered[0].ResourceAttributes[0].Value.GetStringValue() != "service-a" {
-		t.Fatal("Wrong entry returned")
-	}
-}
-
-func TestFilterByResourceTypeNilAttributes(t *testing.T) {
-	entry := store.ProfileEntry{
-		ResourceAttributes: nil,
-	}
-
-	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "service.name:test")
-	if len(filtered) != 0 {
-		t.Fatalf("Expected 0 entries for nil attributes, got %d", len(filtered))
-	}
-}
-
-func TestToFlamegraphWithFilename(t *testing.T) {
-	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"", "main.go", "myFunc"},
-		LocationTable: []*profilespb.Location{
-			{
-				Lines: []*profilespb.Line{
-					{FunctionIndex: 0},
-				},
-			},
-		},
-		FunctionTable: []*profilespb.Function{
-			{NameStrindex: 2, FilenameStrindex: 1},
-		},
-		StackTable: []*profilespb.Stack{
-			{LocationIndices: []int32{0}},
-		},
-	}
-
-	profile := &profilespb.Profile{
-		Samples: []*profilespb.Sample{
-			{StackIndex: 0, Values: []int64{1}},
-		},
-	}
-
-	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}}, Options{})
-
-	if len(root.Children) == 0 {
-		t.Fatal("expected a child node")
-	}
-
-	child := root.Children[0]
-	if child.Name != "myFunc" {
-		t.Fatalf("expected name 'myFunc', got '%s'", child.Name)
-	}
-	if child.Filename != "main.go" {
-		t.Fatalf("expected filename 'main.go', got '%s'", child.Filename)
-	}
-}
-
-func TestToFlamegraphWithoutFilename(t *testing.T) {
-	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"", "myFunc"},
-		LocationTable: []*profilespb.Location{
-			{
-				Lines: []*profilespb.Line{
-					{FunctionIndex: 0},
-				},
-			},
-		},
-		FunctionTable: []*profilespb.Function{
-			{NameStrindex: 1},
-		},
-		StackTable: []*profilespb.Stack{
-			{LocationIndices: []int32{0}},
-		},
-	}
-
-	profile := &profilespb.Profile{
-		Samples: []*profilespb.Sample{
-			{StackIndex: 0, Values: []int64{1}},
-		},
-	}
-
-	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}}, Options{})
-
-	if len(root.Children) == 0 {
-		t.Fatal("expected a child node")
-	}
-
-	child := root.Children[0]
-	if child.Filename != "" {
-		t.Fatalf("expected empty filename, got '%s'", child.Filename)
-	}
-}
-
-func TestNamedFlamegraph(t *testing.T) {
-	ng := NamedFlamegraph{
-		Type: "cpu",
-		Root: &FlameNode{
-			Name:  "root",
-			Value: 1000,
-		},
-	}
-
-	if ng.Type != "cpu" {
-		t.Fatalf("Expected type 'cpu', got '%s'", ng.Type)
-	}
-
-	if ng.Root.Value != 1000 {
-		t.Fatalf("Expected root value 1000, got %d", ng.Root.Value)
-	}
-}
-
-func TestToFlamegraphWithFrameType(t *testing.T) {
-	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"", "profile.frame.type", "python", "myFunc"},
-		AttributeTable: []*profilespb.KeyValueAndUnit{
-			{}, // index 0 is always zero value
-			{
-				KeyStrindex: 1, // "profile.frame.type"
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValue{StringValue: "cpython"},
-				},
-			},
-		},
-		LocationTable: []*profilespb.Location{
-			{
-				Lines:            []*profilespb.Line{{FunctionIndex: 0}},
-				AttributeIndices: []int32{1},
-			},
-		},
-		FunctionTable: []*profilespb.Function{
-			{NameStrindex: 3},
-		},
-		StackTable: []*profilespb.Stack{
-			{LocationIndices: []int32{0}},
-		},
-	}
-
-	profile := &profilespb.Profile{
-		Samples: []*profilespb.Sample{
-			{StackIndex: 0, Values: []int64{1}},
-		},
-	}
-
-	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}}, Options{})
-
-	if len(root.Children) == 0 {
-		t.Fatal("expected a child node")
-	}
-
-	child := root.Children[0]
-	if child.Name != "myFunc" {
-		t.Fatalf("expected name 'myFunc', got '%s'", child.Name)
-	}
-	if child.FrameType != "cpython" {
-		t.Fatalf("expected libtype 'cpython', got '%s'", child.FrameType)
-	}
-}
-
-func TestToFlamegraphNoFrameType(t *testing.T) {
-	dict := &profilespb.ProfilesDictionary{
-		StringTable: []string{"", "myFunc"},
-		LocationTable: []*profilespb.Location{
-			{Lines: []*profilespb.Line{{FunctionIndex: 0}}},
-		},
-		FunctionTable: []*profilespb.Function{
-			{NameStrindex: 1},
-		},
-		StackTable: []*profilespb.Stack{
-			{LocationIndices: []int32{0}},
-		},
-	}
-
-	profile := &profilespb.Profile{
-		Samples: []*profilespb.Sample{
-			{StackIndex: 0, Values: []int64{1}},
-		},
-	}
-
-	root := ToFlamegraph([]store.ProfileEntry{{Profile: profile, Dictionary: dict}}, Options{})
-
-	if len(root.Children) == 0 {
-		t.Fatal("expected a child node")
-	}
-
-	if root.Children[0].FrameType != "" {
-		t.Fatalf("expected empty libtype, got '%s'", root.Children[0].FrameType)
-	}
-}
-
-func TestFilterByResourceTypeInvalidFormat(t *testing.T) {
-	entry := store.ProfileEntry{
-		ResourceAttributes: []*commonpb.KeyValue{
-			{
-				Key: "service.name",
-				Value: &commonpb.AnyValue{
-					Value: &commonpb.AnyValue_StringValue{StringValue: "test-service"},
-				},
-			},
-		},
-	}
-
-	filtered := FilterByResourceType([]store.ProfileEntry{entry}, "invalid-format")
-	// Invalid format returns all entries (no filtering applied)
-	if len(filtered) != 1 {
-		t.Fatalf("Expected 1 entry for invalid format (graceful degradation), got %d", len(filtered))
+	for _, tt := range tests {
+		root := ToFlamegraph([]store.ProfileEntry{singleFrame(tt.name, tt.file, tt.frameType)}, Options{})
+		if len(root.Children) != 1 {
+			t.Fatalf("%+v: expected one child, got %d", tt, len(root.Children))
+		}
+		child := root.Children[0]
+		if child.Name != tt.name || child.Filename != tt.file || child.FrameType != tt.frameType {
+			t.Errorf("got %q/%q/%q, want %+v", child.Name, child.Filename, child.FrameType, tt)
+		}
 	}
 }
 

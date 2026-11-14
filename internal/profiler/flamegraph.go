@@ -2,6 +2,7 @@
 package profiler
 
 import (
+	"cmp"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -182,19 +183,9 @@ func frameTypeFromLocation(dict *profilespb.ProfilesDictionary, loc *profilespb.
 	return ""
 }
 
-// FilterByResourceType returns the entries matching the single filter resourceType.
-func FilterByResourceType(entries []store.ProfileEntry, resourceType string) []store.ProfileEntry {
-	if resourceType == "" {
-		return entries
-	}
-	return FilterByResource(entries, []string{resourceType})
-}
-
 // FilterByResource returns the entries whose resource matches all "key:value" filters.
 func FilterByResource(entries []store.ProfileEntry, filters []string) []store.ProfileEntry {
-	filters = slices.DeleteFunc(slices.Clone(filters), func(f string) bool {
-		return !strings.Contains(f, ":")
-	})
+	filters = normalizeFilters(filters)
 	if len(filters) == 0 {
 		return entries
 	}
@@ -256,12 +247,7 @@ func resourceVirtualFrames(entry store.ProfileEntry, keys []string) []FrameInfo 
 }
 
 func ToFlamegraph(entries []store.ProfileEntry, opts Options) *FlameNode {
-	root := &FlameNode{
-		Name:        "root",
-		Value:       0,
-		Children:    []*FlameNode{},
-		childrenMap: nil,
-	}
+	root := newFlameRoot()
 
 	resolver := stackResolverPool.Get().(*stackResolver)
 	profileCount := 0
@@ -289,7 +275,7 @@ func applyEntry(root *FlameNode, entry store.ProfileEntry, opts Options, resolve
 	}
 	resFrames := resourceVirtualFrames(entry, opts.VirtualFrameKeys)
 	resolver.use(entry.Dictionary)
-	processProfile(root, entry.Profile, entry.Dictionary, resolver, opts.VirtualFrameKeys, resFrames, sign)
+	processProfile(root, entry.Profile, resolver, opts.VirtualFrameKeys, resFrames, sign)
 }
 
 // pruneFlameNode removes the descendants of node without samples.
@@ -307,7 +293,7 @@ func pruneFlameNode(node *FlameNode) {
 	node.Children = kept
 }
 
-func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profilespb.ProfilesDictionary, resolver *stackResolver,
+func processProfile(root *FlameNode, profile *profilespb.Profile, resolver *stackResolver,
 	virtualKeys []string, resFrames []FrameInfo, sign int64,
 ) {
 	if profile == nil || len(profile.Samples) == 0 {
@@ -321,20 +307,12 @@ func processProfile(root *FlameNode, profile *profilespb.Profile, dict *profiles
 	}
 
 	for _, sample := range profile.Samples {
-		var value int64
-
-		// Scenario 1: Timestamped samples without aggregated values
-		// Each timestamp represents one sample occurrence
-		if len(sample.Values) == 0 && len(sample.TimestampsUnixNano) > 0 {
-			value = int64(len(sample.TimestampsUnixNano))
-		} else if len(sample.Values) > 0 {
-			// Scenario 2 & 3: Aggregated values (with or without timestamps)
+		// Without values, each timestamp is one occurrence.
+		value := int64(len(sample.TimestampsUnixNano))
+		if len(sample.Values) > 0 {
 			value = sample.Values[0]
-			if value == 0 {
-				continue
-			}
-		} else {
-			// No value and no timestamps - skip
+		}
+		if value == 0 {
 			continue
 		}
 
@@ -543,10 +521,7 @@ func ToSandwich(root *FlameNode) *SandwichData {
 	}
 
 	slices.SortFunc(functions, func(a, b *FunctionStats) int {
-		if a.Total != b.Total {
-			return int(b.Total - a.Total)
-		}
-		return strings.Compare(a.Name, b.Name)
+		return cmp.Or(cmp.Compare(b.Total, a.Total), strings.Compare(a.Name, b.Name))
 	})
 
 	return &SandwichData{
@@ -579,27 +554,22 @@ func ExtractSandwichGraphs(root *FlameNode, targetName string) *SandwichGraphs {
 	}
 }
 
+// buildCallerGraph returns an inverted tree with the merged occurrences of
+// targetName at the root and their callers as descendants, or nil if not found.
 func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
-	// Build an inverted tree for icicle visualization: the target at the root
-	// with its callers as descendants. Every occurrence of the target is merged,
-	// each caller accumulating the value of the target it leads to.
-	newRoot := &FlameNode{Name: targetName, Children: []*FlameNode{}, childrenMap: nil}
-	found := false
+	var newRoot *FlameNode
 
 	var walk func(node *FlameNode, callers []*FlameNode)
 	walk = func(node *FlameNode, callers []*FlameNode) {
 		if node.Name == targetName {
-			if !found {
-				newRoot.Filename = node.Filename
-				newRoot.FrameType = node.FrameType
-				found = true
+			if newRoot == nil {
+				newRoot = newTargetNode(node)
 			}
 			newRoot.Value += node.Value
 
-			// Add callers in reverse order, starting with the immediate caller
+			// Starting with the immediate caller
 			current := newRoot
-			for i := len(callers) - 1; i >= 0; i-- {
-				c := callers[i]
+			for _, c := range slices.Backward(callers) {
 				current = insertFrame(current, FrameInfo{Name: c.Name, Filename: c.Filename, FrameType: c.FrameType}, node.Value, 1)
 			}
 			return
@@ -615,47 +585,35 @@ func buildCallerGraph(originalRoot *FlameNode, targetName string) *FlameNode {
 	for _, child := range originalRoot.Children {
 		walk(child, nil)
 	}
-
 	return newRoot
 }
 
+// buildCalleeGraph returns the merged subtrees of all occurrences of
+// targetName, or nil if not found.
 func buildCalleeGraph(originalRoot *FlameNode, targetName string) *FlameNode {
-	// Create root as the target function
-	root := &FlameNode{
-		Name:        targetName,
-		Children:    []*FlameNode{},
-		childrenMap: nil,
+	var newRoot *FlameNode
+
+	var walk func(node *FlameNode)
+	walk = func(node *FlameNode) {
+		if node.Name == targetName {
+			if newRoot == nil {
+				newRoot = newTargetNode(node)
+			}
+			mergeFlameNodes(newRoot, node)
+			return
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
 	}
 
-	// Find all callees (full subtrees) of the target
-	extractCalleeSubtrees(originalRoot, targetName, root)
-
-	return root
+	walk(originalRoot)
+	return newRoot
 }
 
-func extractCalleeSubtrees(node *FlameNode, targetName string, targetRoot *FlameNode) {
-	if node.Name == targetName {
-		// Found target - accumulate its value and copy all its children (full subtrees) to targetRoot
-		if targetRoot.Value == 0 {
-			targetRoot.Filename = node.Filename
-			targetRoot.FrameType = node.FrameType
-		}
-		targetRoot.Value += node.Value
-		for _, child := range node.Children {
-			if existing := targetRoot.findChild(child.Name); existing != nil {
-				// Merge with existing child
-				mergeFlameNodes(existing, child)
-			} else {
-				targetRoot.addChild(copyFlameNode(child))
-			}
-		}
-		return
-	}
-
-	// Continue searching in children
-	for _, child := range node.Children {
-		extractCalleeSubtrees(child, targetName, targetRoot)
-	}
+// newTargetNode returns an empty node with the frame of node.
+func newTargetNode(node *FlameNode) *FlameNode {
+	return &FlameNode{Name: node.Name, Filename: node.Filename, FrameType: node.FrameType, Children: []*FlameNode{}}
 }
 
 func copyFlameNode(node *FlameNode) *FlameNode {
@@ -663,12 +621,11 @@ func copyFlameNode(node *FlameNode) *FlameNode {
 		return nil
 	}
 	newNode := &FlameNode{
-		Name:        node.Name,
-		Value:       node.Value,
-		Filename:    node.Filename,
-		FrameType:   node.FrameType,
-		Children:    make([]*FlameNode, 0, len(node.Children)),
-		childrenMap: nil,
+		Name:      node.Name,
+		Value:     node.Value,
+		Filename:  node.Filename,
+		FrameType: node.FrameType,
+		Children:  make([]*FlameNode, 0, len(node.Children)),
 	}
 	for _, child := range node.Children {
 		newNode.addChild(copyFlameNode(child))
@@ -697,11 +654,7 @@ func collectFunctionStats(node *FlameNode, stats map[string]*FunctionStats) {
 	}
 
 	if _, exists := stats[node.Name]; !exists {
-		stats[node.Name] = &FunctionStats{
-			Name:  node.Name,
-			Self:  0,
-			Total: 0,
-		}
+		stats[node.Name] = &FunctionStats{Name: node.Name}
 	}
 
 	stat := stats[node.Name]

@@ -127,7 +127,11 @@ func exerciseRequest(t *testing.T, req *collectorprofiles.ExportProfilesServiceR
 	for _, sampleType := range st.SampleTypes() {
 		all := st.ProfileEntries(sampleType)
 		for _, f := range filters {
-			entries := FilterByResourceType(all, f)
+			var fs []string
+			if f != "" {
+				fs = []string{f}
+			}
+			entries := FilterByResource(all, fs)
 
 			root := ToFlamegraph(entries, opts)
 			encode(NamedFlamegraph{Type: sampleType, Root: root})
