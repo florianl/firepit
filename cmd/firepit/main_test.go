@@ -264,8 +264,6 @@ func TestAPIMethods(t *testing.T) {
 		{http.MethodPost, "/api/sandwich-detail?functionName=main", http.StatusMethodNotAllowed, ""},
 		{http.MethodGet, "/api/profiles", http.StatusOK, "count"},
 		{http.MethodDelete, "/api/profiles", http.StatusMethodNotAllowed, ""},
-		{http.MethodGet, "/api/resource-types", http.StatusOK, ""},
-		{http.MethodPatch, "/api/resource-types", http.StatusMethodNotAllowed, ""},
 		{http.MethodPost, "/api/resource-attributes", http.StatusMethodNotAllowed, ""},
 		{http.MethodPost, "/api/attribute-keys", http.StatusMethodNotAllowed, ""},
 		{http.MethodPost, "/api/config", http.StatusMethodNotAllowed, ""},

@@ -346,7 +346,6 @@ func buildWebUI(st *store.Store, metrics *receiver.Metrics, cfg Config) (*http.S
 	mux.HandleFunc(base+"/api/sandwich", compressResponse(cache.wrap(handleSandwich(st, agg, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/sandwich-detail", compressResponse(cache.wrap(handleSandwichDetail(st, agg, cfg.VirtualFrames))))
 	mux.HandleFunc(base+"/api/profiles", compressResponse(cache.wrap(handleProfiles(st))))
-	mux.HandleFunc(base+"/api/resource-types", compressResponse(cache.wrap(handleResourceTypes(st))))
 	mux.HandleFunc(base+"/api/resource-attributes", compressResponse(cache.wrap(handleResourceAttributes(st))))
 	mux.HandleFunc(base+"/api/attribute-keys", compressResponse(cache.wrap(handleAttributeKeys(st))))
 	mux.HandleFunc(base+"/api/config", compressResponse(handleConfig(cfg)))
@@ -527,14 +526,6 @@ func handleProfiles(st *store.Store) http.HandlerFunc {
 		}
 
 		json.NewEncoder(w).Encode(info)
-	})
-}
-
-func handleResourceTypes(st *store.Store) http.HandlerFunc {
-	return getJSON(func(w http.ResponseWriter, r *http.Request) {
-		types := st.ResourceTypes()
-
-		json.NewEncoder(w).Encode(types)
 	})
 }
 
