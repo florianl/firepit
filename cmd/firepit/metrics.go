@@ -15,8 +15,7 @@ import (
 
 // handleHealth reports that the process serves requests.
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !allowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -58,8 +57,7 @@ func (w *metricWriter) metric(name, kind, help string, value any) {
 // handleMetrics serves the metrics of firepit in the Prometheus text format.
 func handleMetrics(st *store.Store, recv *receiver.Metrics, started time.Time) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(rw, "Method not allowed", http.StatusMethodNotAllowed)
+		if !allowMethods(rw, r, http.MethodGet, http.MethodHead) {
 			return
 		}
 

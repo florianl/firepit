@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"regexp"
 	rpprof "runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -461,6 +462,16 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 func writeEncodingError(w http.ResponseWriter, err error) {
 	slog.Error("Failed to encode response", "error", err)
 	writeJSONError(w, http.StatusInternalServerError, "Failed to encode response")
+}
+
+// allowMethods reports whether r uses one of methods and responds with 405 otherwise.
+func allowMethods(w http.ResponseWriter, r *http.Request, methods ...string) bool {
+	if slices.Contains(methods, r.Method) {
+		return true
+	}
+	w.Header().Set("Allow", strings.Join(methods, ", "))
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	return false
 }
 
 // getJSON returns a handler that serves next for GET requests with a JSON content type.

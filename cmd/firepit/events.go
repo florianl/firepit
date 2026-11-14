@@ -19,8 +19,7 @@ const (
 // the stored profiles change.
 func handleEvents(st *store.Store, done <-chan struct{}, minInterval, heartbeat time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		if !allowMethods(w, r, http.MethodGet) {
 			return
 		}
 		rc := http.NewResponseController(w)
