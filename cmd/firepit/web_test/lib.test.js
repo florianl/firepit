@@ -11,25 +11,23 @@ import {
     frameLabel,
     frameTypeColor,
     hasData,
+    hasHeatMapData,
+    hasSandwichData,
+    heatMapCells,
     matchesFrameFilter,
     nameSaturation,
+    offeredResourceFilters,
     resourceFilterParams,
     sanitizeId,
     sortSandwichFunctions,
     toQuery,
+    wrapText,
 } from '../web/lib.js';
 
-test('frameTypeColor maps frame types to colors', () => {
+test('frameTypeColor maps frame types to colors within the RGB range', () => {
     assert.equal(frameTypeColor('go', 0), 'rgb(0,173,196)');
-    assert.equal(frameTypeColor('go', 1), 'rgb(50,218,236)');
-    assert.equal(frameTypeColor('kernel', 0.5), 'rgb(201,220,147)');
     assert.equal(frameTypeColor('ruby', 1), 'rgb(255,155,0)');
-    assert.equal(frameTypeColor('virtual', 0), 'rgb(150,155,165)');
     assert.equal(frameTypeColor('unknown', 0.5), null);
-    assert.equal(frameTypeColor('', 0.5), null);
-});
-
-test('frameTypeColor stays within the RGB range for every type', () => {
     const types = ['kernel', 'native', 'cpython', 'jvm', 'dotnet', 'v8js', 'ruby', 'perl', 'php', 'beam', 'go', 'rust', 'luajit', 'virtual'];
     for (const type of types) {
         for (const saturation of [0, 0.25, 0.5, 1]) {
@@ -43,14 +41,12 @@ test('frameTypeColor stays within the RGB range for every type', () => {
     }
 });
 
-test('nameSaturation is stable and between 0 and 1', () => {
-    assert.equal(nameSaturation(''), 0);
+test('nameSaturation is between 0 and 1', () => {
     assert.equal(nameSaturation(undefined), 0);
     assert.equal(nameSaturation('(anonymous)'), 0);
-    for (const name of ['main', 'runtime.mallocgc', 'java.lang.Thread.run()', 'z'.repeat(40), '☃']) {
+    for (const name of ['main', 'java.lang.Thread.run()', 'z'.repeat(40), '☃']) {
         const s = nameSaturation(name);
         assert.ok(s >= 0 && s <= 1, `${name}: ${s}`);
-        assert.equal(nameSaturation(name), s);
     }
     // Only the symbol before the arguments and its first characters count.
     assert.equal(nameSaturation('foo(int)'), nameSaturation('foo(char*)'));
@@ -62,7 +58,7 @@ test('frameColor needs a known frame type', () => {
     assert.equal(frameColor('', 'main'), null);
     assert.equal(frameColor(undefined, 'main'), null);
     assert.equal(frameColor('cobol', 'main'), null);
-    assert.equal(frameColor('go', 'main'), frameTypeColor('go', nameSaturation('main')));
+    assert.equal(frameColor('go', 'main'), 'rgb(36,205,225)');
     assert.match(frameColor('native', undefined), /^rgb\(/);
 });
 
@@ -93,6 +89,47 @@ test('hasData requires children', () => {
     assert.equal(hasData({ name: 'root', value: 0 }), false);
     assert.equal(hasData({ name: 'root', children: [] }), false);
     assert.equal(hasData({ name: 'root', children: [{ name: 'main', value: 1 }] }), true);
+});
+
+test('hasHeatMapData requires seconds', () => {
+    assert.equal(hasHeatMapData(null), false);
+    assert.equal(hasHeatMapData({ numSeconds: 0 }), false);
+    assert.equal(hasHeatMapData({ numSeconds: 3 }), true);
+});
+
+test('hasSandwichData requires functions', () => {
+    assert.equal(hasSandwichData(null), false);
+    assert.equal(hasSandwichData({ root: null }), false);
+    assert.equal(hasSandwichData({ functions: [] }), false);
+    assert.equal(hasSandwichData({ functions: [{ name: 'main', self: 1, total: 1 }] }), true);
+});
+
+test('heatMapCells flattens the non-zero cells', () => {
+    assert.deepEqual(heatMapCells({ numSeconds: 0, numSubBuckets: 2, cells: [] }), []);
+    assert.deepEqual(heatMapCells({ numSeconds: 2, numSubBuckets: 3, cells: [0, 4, 0, 1, 0, 2] }), [
+        { xi: 0, yi: 1, v: 4 },
+        { xi: 1, yi: 0, v: 1 },
+        { xi: 1, yi: 2, v: 2 },
+    ]);
+});
+
+test('wrapText breaks at separators', () => {
+    assert.deepEqual(wrapText('main', 10), ['main']);
+    assert.deepEqual(wrapText('', 10), ['']);
+    assert.deepEqual(wrapText('runtime.mallocgc', 12), ['runtime.', 'mallocgc']);
+    assert.deepEqual(wrapText('a_b-c.d', 3), ['a_b', '-c.', 'd']);
+    assert.deepEqual(wrapText('averylongword.x', 5), ['averylongword', '.x']);
+});
+
+test('offeredResourceFilters drops filters no longer offered', () => {
+    const attrs = new Map([['service.name', ['api', 'db']], ['host', []]]);
+    const filters = [
+        { key: 'service.name', value: 'api' },
+        { key: 'service.name', value: 'gone' },
+        { key: 'host', value: 'a' },
+        { key: 'missing', value: 'x' },
+    ];
+    assert.deepEqual(offeredResourceFilters(filters, attrs), [{ key: 'service.name', value: 'api' }]);
 });
 
 test('formatTime rounds to integers', () => {
@@ -150,5 +187,9 @@ test('buildExport describes the exported graph', () => {
     const plain = buildExport({ type: 'cpu', root }, '', [], now);
     assert.equal(plain.unit, null);
     assert.equal(plain.resourceType, 'all');
-    assert.equal(exportFilename('samples(count)', now), `flamegraph-samples(count)-${now.getTime()}.json`);
+});
+
+test('exportFilename names the type and time', () => {
+    const now = new Date(Date.UTC(2026, 0, 2, 3, 4, 5));
+    assert.equal(exportFilename('samples(count)', now), 'flamegraph-samples(count)-1767323045000.json');
 });

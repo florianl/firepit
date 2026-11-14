@@ -9,11 +9,16 @@ import {
     frameColor,
     frameLabel,
     hasData,
+    hasHeatMapData,
+    hasSandwichData,
+    heatMapCells,
     matchesFrameFilter,
+    offeredResourceFilters,
     resourceFilterParams,
     sanitizeId,
     sortSandwichFunctions,
     toQuery,
+    wrapText,
 } from './lib.js';
 
 let updateInterval = null;
@@ -36,11 +41,8 @@ function stopPolling() {
 
 function startUpdates() {
     stopUpdates();
-    if (typeof EventSource === 'undefined') {
-        startPolling();
-        return;
-    }
     startPolling();
+    if (typeof EventSource === 'undefined') return;
     eventSource = new EventSource(window.__BASE_PATH__ + '/api/events');
     // Also sent after a reconnect, so catch up.
     eventSource.addEventListener('ready', () => {
@@ -64,56 +66,51 @@ let activeTab = null;
 let resourceFilters = []; // {key, value}, all must match
 let selectedAttrKey = '';
 let resourceAttributeMap = new Map(); // key -> values
-let lastResourceTypesKey = '';
 let frameFilter = '';
 let currentGraphs = null;
 let viewMode = 'flamegraph';
-let currentHeatMaps = null;
 let sortMode = 'time-ordered';
 // Attribute keys rendered as virtual frames in the flame graph view,
 // outermost first. None are selected unless configured on the server.
 let virtualFrames = [];
 let attributeKeys = [];
-let lastAttributeKeysKey = '';
+
+// chipElement returns a chip showing text with a button that calls onRemove.
+function chipElement(text, title, onRemove) {
+    const chip = document.createElement('span');
+    chip.className = 'vframe-chip';
+    chip.textContent = text;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.title = title;
+    remove.textContent = '×';
+    remove.addEventListener('click', onRemove);
+    chip.appendChild(remove);
+    return chip;
+}
+
+// fillSelect replaces the options of select with a placeholder, which has
+// the empty value, and one option per value.
+function fillSelect(select, placeholder, values) {
+    select.replaceChildren(new Option(placeholder, ''), ...values.map(v => new Option(v, v)));
+}
 
 // Rebuilds the filter chips and the selects. Filtered keys are not
 // offered again, as a resource has one value per key.
 function rebuildResourceFilterControls() {
-    const chips = document.getElementById('resource-filter-chips');
-    chips.replaceChildren();
-    resourceFilters.forEach((f, i) => {
-        const chip = document.createElement('span');
-        chip.className = 'vframe-chip';
-        chip.textContent = f.key + ' = ' + f.value;
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.title = 'Remove filter ' + f.key;
-        remove.textContent = '×';
-        remove.addEventListener('click', () => {
+    document.getElementById('resource-filter-chips').replaceChildren(
+        ...resourceFilters.map((f, i) => chipElement(f.key + ' = ' + f.value, 'Remove filter ' + f.key, () => {
             resourceFilters = resourceFilters.filter((_, j) => j !== i);
             rebuildResourceFilterControls();
             updateChart(true);
-        });
-        chip.appendChild(remove);
-        chips.appendChild(chip);
-    });
+        })));
 
     const used = new Set(resourceFilters.map(f => f.key));
     const keys = [...resourceAttributeMap.keys()].filter(k => !used.has(k));
     if (!keys.includes(selectedAttrKey)) selectedAttrKey = '';
 
     const keySelect = document.getElementById('resource-key-select');
-    keySelect.replaceChildren();
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = resourceFilters.length ? '+ and' : 'All';
-    keySelect.appendChild(placeholder);
-    keys.forEach(k => {
-        const o = document.createElement('option');
-        o.value = k;
-        o.textContent = k;
-        keySelect.appendChild(o);
-    });
+    fillSelect(keySelect, resourceFilters.length ? '+ and' : 'All', keys);
     keySelect.value = selectedAttrKey;
     keySelect.disabled = keys.length === 0;
 
@@ -122,65 +119,29 @@ function rebuildResourceFilterControls() {
 
 function rebuildValueSelect() {
     const valueSelect = document.getElementById('resource-value-select');
-    valueSelect.replaceChildren();
-
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    valueSelect.appendChild(placeholder);
-
     if (!selectedAttrKey) {
-        placeholder.textContent = '(select attribute)';
+        fillSelect(valueSelect, '(select attribute)', []);
         valueSelect.disabled = true;
         return;
     }
-
-    placeholder.textContent = '(select value)';
+    fillSelect(valueSelect, '(select value)', resourceAttributeMap.get(selectedAttrKey) || []);
     valueSelect.disabled = false;
-    (resourceAttributeMap.get(selectedAttrKey) || []).forEach(v => {
-        const o = document.createElement('option');
-        o.value = v;
-        o.textContent = v;
-        valueSelect.appendChild(o);
-    });
     valueSelect.value = '';
 }
 
 function rebuildVirtualFrameControls() {
-    const chips = document.getElementById('vframe-chips');
-    chips.innerHTML = '';
-    virtualFrames.forEach((key, i) => {
-        const chip = document.createElement('span');
-        chip.className = 'vframe-chip';
-        chip.textContent = key;
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.title = 'Remove ' + key;
-        remove.textContent = '×';
-        remove.addEventListener('click', () => {
+    document.getElementById('vframe-chips').replaceChildren(
+        ...virtualFrames.map((key, i) => chipElement(key, 'Remove ' + key, () => {
             virtualFrames = virtualFrames.filter((_, j) => j !== i);
             rebuildVirtualFrameControls();
             updateChart(true);
-        });
-        chip.appendChild(remove);
-        chips.appendChild(chip);
-    });
+        })));
 
     const addSelect = document.getElementById('vframe-add-select');
-    addSelect.innerHTML = '';
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = '+ add';
-    addSelect.appendChild(placeholder);
-    attributeKeys
-        .filter(k => !virtualFrames.includes(k))
-        .forEach(k => {
-            const o = document.createElement('option');
-            o.value = k;
-            o.textContent = k;
-            addSelect.appendChild(o);
-        });
+    const keys = attributeKeys.filter(k => !virtualFrames.includes(k));
+    fillSelect(addSelect, '+ add', keys);
     addSelect.value = '';
-    addSelect.disabled = addSelect.options.length <= 1;
+    addSelect.disabled = keys.length === 0;
 }
 
 // Appends the shared query parameters for flame graph based endpoints.
@@ -252,43 +213,21 @@ function applyFrameFilter() {
     const filterText = document.getElementById('frame-filter').value.toLowerCase();
     frameFilter = filterText;
 
-    // Get all rect elements (the actual frame rectangles)
-    const rects = document.querySelectorAll('svg rect');
-
-    if (!filterText) {
-        // No filter: remove all dimming and highlight classes from groups
-        document.querySelectorAll('svg g.flame-dimmed, svg g.flame-highlight').forEach(group => {
-            group.classList.remove('flame-dimmed', 'flame-highlight');
-        });
-    } else {
-        // Filter applied: dim all frames first (apply classes to parent groups)
-        rects.forEach(rect => {
-            const parent = rect.parentElement;
-            if (parent && parent.tagName === 'g') {
-                parent.classList.add('flame-dimmed');
-            }
-        });
-
-        // Then highlight matching frames
-        rects.forEach(rect => {
-            // Get frame name from d3 data
-            const frameName = rect.__data__ && rect.__data__.data ? rect.__data__.data.name : '';
-
-            if (matchesFrameFilter(frameName, filterText)) {
-                const parent = rect.parentElement;
-                if (parent && parent.tagName === 'g') {
-                    parent.classList.remove('flame-dimmed');
-                    parent.classList.add('flame-highlight');
-                }
-            }
-        });
-    }
+    // Classes go on the group of each frame rectangle.
+    document.querySelectorAll('svg rect').forEach(rect => {
+        const parent = rect.parentElement;
+        if (!parent || parent.tagName !== 'g') return;
+        const frameName = rect.__data__ && rect.__data__.data ? rect.__data__.data.name : '';
+        const match = filterText !== '' && matchesFrameFilter(frameName, filterText);
+        parent.classList.toggle('flame-dimmed', filterText !== '' && !match);
+        parent.classList.toggle('flame-highlight', match);
+    });
 }
 
 function renderFlamegraph(containerId, data) {
     const container = document.getElementById(containerId);
     if (!container) return;
-    container.innerHTML = '';
+    container.replaceChildren();
 
     const width = document.documentElement.clientWidth;
     const height = Math.max(400, window.innerHeight - 220);
@@ -357,13 +296,29 @@ function exportCurrentGraph() {
 
 // URL and ETag the current view was rendered from.
 let lastRenderedKey = null;
+// Aborts the pending view request when a newer one starts.
+let viewAbort = null;
+
+// httpError returns the error of a failed response r.
+function httpError(r) {
+    return new Error('HTTP ' + r.status + (r.statusText ? ' ' + r.statusText : ''));
+}
+
+// isAbort reports whether err comes from a request superseded by a newer one.
+function isAbort(err) {
+    return err && err.name === 'AbortError';
+}
 
 // fetchViewData resolves to {data}, or to null if the view is already
-// rendered from this response and force is not set.
+// rendered from this response and force is not set. It rejects with an
+// AbortError once a newer request starts.
 function fetchViewData(endpoint, query, force) {
     const url = window.__BASE_PATH__ + endpoint + query;
-    return fetch(url).then(r => {
-        const etag = r.ok ? r.headers.get('ETag') : null;
+    if (viewAbort !== null) viewAbort.abort();
+    viewAbort = new AbortController();
+    return fetch(url, { signal: viewAbort.signal }).then(r => {
+        if (!r.ok) throw httpError(r);
+        const etag = r.headers.get('ETag');
         const key = etag ? url + ' ' + etag : null;
         if (!force && key !== null && key === lastRenderedKey) {
             if (r.body) r.body.cancel().catch(() => {});
@@ -374,9 +329,23 @@ function fetchViewData(endpoint, query, force) {
             return {data};
         });
     }).catch(err => {
-        lastRenderedKey = null;
+        if (!isAbort(err)) lastRenderedKey = null;
         throw err;
     });
+}
+
+// showTooltip shows the tooltip with the given nodes or strings next to
+// the pointer of event.
+function showTooltip(event, ...content) {
+    const tooltip = document.getElementById('tooltip');
+    tooltip.replaceChildren(...content);
+    tooltip.style.display = 'block';
+    tooltip.style.left = (event.clientX + 12) + 'px';
+    tooltip.style.top = (event.clientY - 28) + 'px';
+}
+
+function hideTooltip() {
+    document.getElementById('tooltip').style.display = 'none';
 }
 
 function markUpdated() {
@@ -411,171 +380,129 @@ function updateChart(force) {
         .catch(() => {});
 
     // Attribute keys available as virtual frames
-    fetch(window.__BASE_PATH__ + '/api/attribute-keys')
-        .then(r => r.json())
-        .then(keys => {
-            const newKeys = keys || [];
-            const newKey = JSON.stringify(newKeys);
-            if (newKey === lastAttributeKeysKey) return;
-            lastAttributeKeysKey = newKey;
-            attributeKeys = newKeys;
-            rebuildVirtualFrameControls();
-        })
-        .catch(() => {});
+    fetchIfChanged('/api/attribute-keys', keys => {
+        attributeKeys = keys;
+        rebuildVirtualFrameControls();
+    });
 
     // Resource attributes for filtering
-    fetch(window.__BASE_PATH__ + '/api/resource-attributes')
+    fetchIfChanged('/api/resource-attributes', attrs => {
+        resourceAttributeMap = new Map(attrs.map(a => [a.key, a.values || []]));
+
+        // Drop stale filters as they would hide all profiles
+        const before = resourceFilters.length;
+        resourceFilters = offeredResourceFilters(resourceFilters, resourceAttributeMap);
+        rebuildResourceFilterControls();
+        if (resourceFilters.length !== before) updateChart(true);
+    });
+}
+
+// Last response of each endpoint polled by fetchIfChanged.
+const lastListKeys = new Map();
+
+// fetchIfChanged fetches a JSON list from endpoint and passes it to
+// onChange if it differs from the previous response.
+function fetchIfChanged(endpoint, onChange) {
+    fetch(window.__BASE_PATH__ + endpoint)
         .then(r => r.json())
-        .then(attrs => {
-            const newAttrs = attrs || [];
-            const newKey = JSON.stringify(newAttrs);
-            if (newKey === lastResourceTypesKey) return;
-            lastResourceTypesKey = newKey;
-
-            resourceAttributeMap = new Map(newAttrs.map(a => [a.key, a.values || []]));
-
-            // Drop stale filters as they would hide all profiles
-            const before = resourceFilters.length;
-            resourceFilters = resourceFilters.filter(f =>
-                (resourceAttributeMap.get(f.key) || []).includes(f.value));
-            rebuildResourceFilterControls();
-            if (resourceFilters.length !== before) updateChart(true);
+        .then(list => {
+            const value = list || [];
+            const key = JSON.stringify(value);
+            if (key === lastListKeys.get(endpoint)) return;
+            lastListKeys.set(endpoint, key);
+            onChange(value);
         })
         .catch(() => {});
 }
 
-function fetchAndRenderFlamegraph(query, force) {
-    fetchViewData('/api/flamegraph', query, force)
+// selectTab shows the tab and panel of the sample type.
+function selectTab(type) {
+    activeTab = type;
+    document.querySelectorAll('.tab-btn').forEach(
+        b => b.classList.toggle('active', b.dataset.type === activeTab)
+    );
+    document.querySelectorAll('.tab-panel').forEach(
+        p => p.classList.toggle('active', p.id === 'panel-' + sanitizeId(activeTab))
+    );
+}
+
+// renderTabbedView fetches a view with one tab per sample type and renders
+// each entry with data into its panel with renderPanel(panelId, entry).
+// onData, if set, receives the fetched entries. onSelect, if set, runs when
+// the user switches tabs.
+function renderTabbedView(endpoint, query, force, { hasEntryData, renderPanel, panelClass = '', onData, onSelect }) {
+    fetchViewData(endpoint, query, force)
         .then(res => {
             if (res === null) { markUpdated(); return; }
-            const graphs = res.data;
-            currentGraphs = graphs;
-            // graphs: [{type, unit, root}, ...]
+            const entries = res.data;
+            if (onData) onData(entries);
             const strip  = document.getElementById('tab-strip');
             const charts = document.getElementById('charts');
 
-            const noData = !graphs || graphs.length === 0 ||
-                           graphs.every(g => !hasData(g.root));
-
-            if (noData) {
-                strip.style.display  = 'none';
-                charts.innerHTML     =
-                    '<div class="waiting">Waiting for profiles...</div>';
+            if (!entries || entries.length === 0 || !entries.some(hasEntryData)) {
+                strip.style.display = 'none';
+                charts.replaceChildren(messageElement('waiting', 'Waiting for profiles...'));
+                markUpdated();
                 return;
             }
 
-            // Default activeTab to first type on first render
-            if (activeTab === null || !graphs.find(g => g.type === activeTab)) {
-                activeTab = graphs[0].type;
+            if (activeTab === null || !entries.find(e => e.type === activeTab)) {
+                activeTab = entries[0].type;
             }
 
-            // Rebuild tab strip
             strip.style.display = 'flex';
-            strip.innerHTML = '';
-            graphs.forEach(g => {
-                const label = g.unit ? `${g.type} (${g.unit})` : g.type;
-                const btn   = document.createElement('button');
-                btn.className  = 'tab-btn' + (g.type === activeTab ? ' active' : '');
-                btn.textContent = label;
-                btn.dataset.type = g.type;
+            strip.replaceChildren();
+            entries.forEach(e => {
+                const btn = document.createElement('button');
+                btn.className = 'tab-btn' + (e.type === activeTab ? ' active' : '');
+                btn.textContent = e.unit ? `${e.type} (${e.unit})` : e.type;
+                btn.dataset.type = e.type;
                 btn.addEventListener('click', () => {
-                    activeTab = g.type;
-                    document.querySelectorAll('.tab-btn').forEach(
-                        b => b.classList.toggle('active', b.dataset.type === activeTab)
-                    );
-                    document.querySelectorAll('.tab-panel').forEach(
-                        p => p.classList.toggle('active', p.id === 'panel-' + sanitizeId(activeTab))
-                    );
+                    if (onSelect) onSelect();
+                    selectTab(e.type);
                 });
                 strip.appendChild(btn);
             });
 
-            // Rebuild panels
-            charts.innerHTML = '';
-            graphs.forEach(g => {
+            charts.replaceChildren();
+            entries.forEach(e => {
                 const panel = document.createElement('div');
-                const panelId = 'panel-' + sanitizeId(g.type);
-                panel.className = 'tab-panel' + (g.type === activeTab ? ' active' : '');
+                const panelId = 'panel-' + sanitizeId(e.type);
+                panel.className = 'tab-panel' + panelClass + (e.type === activeTab ? ' active' : '');
                 panel.id = panelId;
                 charts.appendChild(panel);
 
-                if (hasData(g.root)) {
-                    setTimeout(() => renderFlamegraph(panelId, g.root), 0);
+                if (hasEntryData(e)) {
+                    setTimeout(() => renderPanel(panelId, e), 0);
                 } else {
-                    panel.replaceChildren(messageElement('waiting', 'No data for ' + g.type));
+                    panel.replaceChildren(messageElement('waiting', 'No data for ' + e.type));
                 }
             });
 
-            document.getElementById('last-update').textContent =
-                new Date().toLocaleTimeString();
+            markUpdated();
         })
         .catch(err => {
+            if (isAbort(err)) return;
             document.getElementById('charts').replaceChildren(errorElement(err));
         });
+}
 
-    document.getElementById('last-update').textContent =
-        new Date().toLocaleTimeString();
+function fetchAndRenderFlamegraph(query, force) {
+    renderTabbedView('/api/flamegraph', query, force, {
+        hasEntryData: g => hasData(g.root),
+        renderPanel: (panelId, g) => renderFlamegraph(panelId, g.root),
+        onData: graphs => { currentGraphs = graphs; },
+    });
 }
 
 function fetchAndRenderHeatMap(query, force) {
-    fetchViewData('/api/flamescope', query, force)
-        .then(res => {
-            if (res === null) { markUpdated(); return; }
-            const hmaps = res.data;
-            currentHeatMaps = hmaps;
-            const strip  = document.getElementById('tab-strip');
-            const charts = document.getElementById('charts');
-
-            const noData = !hmaps || hmaps.length === 0 ||
-                           hmaps.every(h => !h.data || h.data.numSeconds === 0);
-
-            if (noData) {
-                strip.style.display = 'none';
-                charts.innerHTML = '<div class="waiting">Waiting for profiles...</div>';
-                return;
-            }
-
-            if (activeTab === null || !hmaps.find(h => h.type === activeTab)) {
-                activeTab = hmaps[0].type;
-            }
-
-            // Rebuild tab strip
-            strip.style.display = 'flex';
-            strip.innerHTML = '';
-            hmaps.forEach(h => {
-                const btn = document.createElement('button');
-                btn.className = 'tab-btn' + (h.type === activeTab ? ' active' : '');
-                btn.textContent = h.type;
-                btn.dataset.type = h.type;
-                btn.addEventListener('click', () => {
-                    activeTab = h.type;
-                    document.querySelectorAll('.tab-btn').forEach(
-                        b => b.classList.toggle('active', b.dataset.type === activeTab)
-                    );
-                    renderHeatMapForType(activeTab);
-                });
-                strip.appendChild(btn);
-            });
-
-            // Render initial heatmap
-            charts.innerHTML = '';
-            renderHeatMapForType(activeTab);
-            document.getElementById('last-update').textContent =
-                new Date().toLocaleTimeString();
-        })
-        .catch(err => {
-            document.getElementById('charts').replaceChildren(errorElement(err));
-        });
-}
-
-function renderHeatMapForType(type) {
-    const charts = document.getElementById('charts');
-    const entry = (currentHeatMaps || []).find(h => h.type === type);
-    if (!entry || !entry.data || entry.data.numSeconds === 0) {
-        charts.replaceChildren(messageElement('waiting', 'No heatmap data for ' + type));
-        return;
-    }
-    renderHeatMap(charts, entry.data);
+    renderTabbedView('/api/flamescope', query, force, {
+        hasEntryData: h => hasHeatMapData(h.data),
+        renderPanel: (panelId, h) => {
+            const panel = document.getElementById(panelId);
+            if (panel) renderHeatMap(panel, h.data);
+        },
+    });
 }
 
 function renderHeatMap(container, d) {
@@ -605,7 +532,7 @@ function renderHeatMap(container, d) {
     const color = d3.scaleSequential(d3.interpolateRgb('#ffffff', '#8b0000'))
         .domain([0, d.maxValue || 1]);
 
-    container.innerHTML = '';
+    container.replaceChildren();
     const svg = d3.select(container).append('svg')
         .attr('width',  totalWidth)
         .attr('height', totalHeight);
@@ -613,16 +540,7 @@ function renderHeatMap(container, d) {
     const g = svg.append('g')
         .attr('transform', `translate(${marginLeft},${marginTop})`);
 
-    // Build cell data (only non-zero cells)
-    const cellData = [];
-    for (let xi = 0; xi < d.numSeconds; xi++) {
-        for (let yi = 0; yi < d.numSubBuckets; yi++) {
-            const v = d.cells[xi * d.numSubBuckets + yi];
-            if (v > 0) cellData.push({ xi, yi, v });
-        }
-    }
-
-    const tooltip = document.getElementById('heatmap-tooltip');
+    const cellData = heatMapCells(d);
 
     // Render cells
     g.selectAll('rect.hm-cell')
@@ -638,13 +556,9 @@ function renderHeatMap(container, d) {
             const offsetMs = c.yi * d.subBucketMs;
             const wallSec  = d.minTimeSec + c.xi;
             const wallTime = new Date(wallSec * 1000).toLocaleTimeString();
-            tooltip.style.display  = 'block';
-            tooltip.style.left     = (event.clientX + 12) + 'px';
-            tooltip.style.top      = (event.clientY - 28) + 'px';
-            tooltip.textContent    =
-                `t=${wallTime} +${offsetMs}ms  samples=${c.v}`;
+            showTooltip(event, `t=${wallTime} +${offsetMs}ms  samples=${c.v}`);
         })
-        .on('mouseleave', () => { tooltip.style.display = 'none'; });
+        .on('mouseleave', hideTooltip);
 
     // X-axis labels (wall-clock time)
     const tickStep = Math.max(1, Math.round(d.numSeconds / 10));
@@ -701,16 +615,17 @@ function renderHeatMap(container, d) {
     const legendX = innerWidth - legendW;
     const legendY = -20;
     const defs  = svg.append('defs');
-    const grad  = defs.append('linearGradient').attr('id', 'hm-legend-grad')
+    // One heatmap per panel, so the gradient id must be unique.
+    const gradId = 'hm-legend-grad-' + container.id;
+    const grad  = defs.append('linearGradient').attr('id', gradId)
         .attr('x1', '0%').attr('y1', '0%')
         .attr('x2', '100%').attr('y2', '0%');
     grad.append('stop').attr('offset', '0%').attr('stop-color', '#ffffff');
-    grad.append('stop').attr('offset', '50%').attr('stop-color', '#ff6b6b');
     grad.append('stop').attr('offset', '100%').attr('stop-color', '#8b0000');
     g.append('rect')
         .attr('x', legendX).attr('y', legendY)
         .attr('width', legendW).attr('height', legendH)
-        .attr('fill', 'url(#hm-legend-grad)');
+        .attr('fill', `url(#${gradId})`);
     g.append('text').attr('x', legendX).attr('y', legendY - 2)
         .attr('font-size', '10px').attr('fill', '#555').text('0');
     g.append('text').attr('x', legendX + legendW).attr('y', legendY - 2)
@@ -721,150 +636,88 @@ function renderHeatMap(container, d) {
 let sandwichSortColumn = 'total';
 let sandwichSortAsc = false;
 let selectedFunctionName = null;
+// Aborts the pending sandwich detail request when a newer one starts.
+let detailAbort = null;
 
 function fetchAndRenderSandwich(query, force) {
-    fetchViewData('/api/sandwich', query, force)
-        .then(res => {
-            if (res === null) { markUpdated(); return; }
-            const sandwiches = res.data;
-            currentGraphs = sandwiches;
-            const strip  = document.getElementById('tab-strip');
-            const charts = document.getElementById('charts');
-
-            const noData = !sandwiches || sandwiches.length === 0 ||
-                           sandwiches.every(s => !s.data || !s.data.functions || s.data.functions.length === 0);
-
-            if (noData) {
-                strip.style.display  = 'none';
-                charts.innerHTML     = '<div class="waiting">Waiting for profiles...</div>';
-                return;
-            }
-
-            if (activeTab === null || !sandwiches.find(s => s.type === activeTab)) {
-                activeTab = sandwiches[0].type;
-            }
-
-            strip.style.display = 'flex';
-            strip.innerHTML = '';
-            sandwiches.forEach(s => {
-                const btn   = document.createElement('button');
-                btn.className  = 'tab-btn' + (s.type === activeTab ? ' active' : '');
-                btn.textContent = s.type;
-                btn.dataset.type = s.type;
-                btn.addEventListener('click', () => {
-                    activeTab = s.type;
-                    selectedFunctionName = null;
-                    document.querySelectorAll('.tab-btn').forEach(
-                        b => b.classList.toggle('active', b.dataset.type === activeTab)
-                    );
-                    document.querySelectorAll('.tab-panel').forEach(
-                        p => p.classList.toggle('active', p.id === 'panel-' + sanitizeId(activeTab))
-                    );
-                });
-                strip.appendChild(btn);
-            });
-
-            // Graph mode controls removed - using single DAG view instead
-
-            charts.innerHTML = '';
-            sandwiches.forEach(s => {
-                const panel = document.createElement('div');
-                const panelId = 'panel-' + sanitizeId(s.type);
-                panel.className = 'tab-panel sandwich-container' + (s.type === activeTab ? ' active' : '');
-                panel.id = panelId;
-                charts.appendChild(panel);
-
-                if (s.data && s.data.functions && s.data.functions.length > 0) {
-                    setTimeout(() => renderSandwichView(panelId, s.data), 0);
-                } else {
-                    panel.replaceChildren(messageElement('waiting', 'No data for ' + s.type));
-                }
-            });
-
-            document.getElementById('last-update').textContent =
-                new Date().toLocaleTimeString();
-        })
-        .catch(err => {
-            document.getElementById('charts').replaceChildren(errorElement(err));
-        });
+    renderTabbedView('/api/sandwich', query, force, {
+        hasEntryData: s => hasSandwichData(s.data),
+        renderPanel: (panelId, s) => renderSandwichView(panelId, s.type, s.data),
+        panelClass: ' sandwich-container',
+        onSelect: () => { selectedFunctionName = null; },
+    });
 }
 
-function renderSandwichView(containerId, data) {
-    selectedFunctionName = null;
+// renderSandwichView renders the sandwich view of the sample type. The
+// selected function stays selected while the active type still has it.
+function renderSandwichView(containerId, type, data) {
+    const selected = type === activeTab &&
+        data.functions.some(fn => fn.name === selectedFunctionName);
+    if (type === activeTab && !selected) selectedFunctionName = null;
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    container.innerHTML = '';
+    container.replaceChildren();
 
     const leftPanel = document.createElement('div');
     leftPanel.className = 'sandwich-left';
-    leftPanel.id = 'sandwich-left-' + containerId;
 
     const divider = document.createElement('div');
     divider.className = 'sandwich-divider';
-    divider.id = 'sandwich-divider-' + containerId;
 
     const rightPanel = document.createElement('div');
     rightPanel.className = 'sandwich-right';
-    rightPanel.id = 'sandwich-right-' + containerId;
 
     container.appendChild(leftPanel);
     container.appendChild(divider);
     container.appendChild(rightPanel);
 
-    renderSandwichTable(leftPanel, data);
-    renderSandwichGraphPlaceholder(rightPanel);
+    renderSandwichTable(leftPanel, rightPanel, type, data);
+    if (selected) {
+        fetchSandwichDetail(selectedFunctionName, type, rightPanel);
+    } else {
+        rightPanel.replaceChildren(messageElement('waiting', 'Please select a function.'));
+    }
 
     setupSandwichDivider(divider, leftPanel);
 }
 
-function renderSandwichGraphPlaceholder(container) {
-    container.innerHTML = '<div class="waiting">Please select a function.</div>';
-}
+function fetchSandwichDetail(functionName, sampleType, rightPanel) {
+    const query = toQuery(appendCommonParams(new URLSearchParams({ functionName, sampleType })));
 
-function fetchSandwichDetail(functionName, sampleType, resourceTypes, rightPanel) {
-    const params = new URLSearchParams({ functionName: functionName, sampleType: sampleType });
-    resourceTypes.forEach(f => params.append('resourceType', f));
-    params.set('virtualFrames', '');
-    const query = toQuery(params);
-
-    fetch(window.__BASE_PATH__ + '/api/sandwich-detail' + query)
-        .then(r => r.json())
+    if (detailAbort !== null) detailAbort.abort();
+    detailAbort = new AbortController();
+    fetch(window.__BASE_PATH__ + '/api/sandwich-detail' + query, { signal: detailAbort.signal })
+        .then(r => {
+            if (!r.ok) throw httpError(r);
+            return r.json();
+        })
         .then(data => {
             if (data && data[sampleType] && data[sampleType].callers && data[sampleType].callees) {
-                renderSandwichGraphs(rightPanel, data[sampleType]);
+                const dagSection = document.createElement('div');
+                dagSection.className = 'sandwich-graph';
+                const dagContainer = document.createElement('div');
+                dagContainer.style.height = '100%';
+                dagSection.appendChild(dagContainer);
+                rightPanel.replaceChildren(dagSection);
+                renderDAGGraph(dagContainer, data[sampleType]);
             } else {
-                rightPanel.innerHTML = '<div class="waiting">No data for this function.</div>';
+                rightPanel.replaceChildren(messageElement('waiting', 'No data for this function.'));
             }
         })
         .catch(err => {
+            if (isAbort(err)) return;
             rightPanel.replaceChildren(errorElement(err));
         });
 }
 
-function renderSandwichGraphs(container, sandwichData) {
-    container.innerHTML = '';
-    window.currentSandwichData = sandwichData;
-
-    // Create DAG section (only one now, replacing separate callers/callees)
-    const dagSection = document.createElement('div');
-    dagSection.className = 'sandwich-graph';
-    const dagContainer = document.createElement('div');
-    dagContainer.id = 'dag-graph';
-    dagContainer.style.height = '100%';
-    dagSection.appendChild(dagContainer);
-
-    container.appendChild(dagSection);
-
-    // Render DAG (shown by default)
-    renderDAGGraph(dagContainer, sandwichData);
-}
-
-function renderSandwichTable(container, data) {
+// renderSandwichTable renders the function table into container and the
+// detail of a clicked function into rightPanel.
+function renderSandwichTable(container, rightPanel, type, data) {
     if (!data || !data.functions) return;
 
     // Clear container first to ensure only one table is rendered
-    container.innerHTML = '';
+    container.replaceChildren();
 
     const functions = [...data.functions];
     sortSandwichFunctions(functions, sandwichSortColumn, sandwichSortAsc);
@@ -889,7 +742,7 @@ function renderSandwichTable(container, data) {
                 sandwichSortColumn = sortKey;
                 sandwichSortAsc = false;
             }
-            renderSandwichTable(container, data);
+            renderSandwichTable(container, rightPanel, type, data);
         });
         return th;
     };
@@ -903,13 +756,11 @@ function renderSandwichTable(container, data) {
     const tbody = document.createElement('tbody');
     functions.forEach(fn => {
         const row = document.createElement('tr');
-        row.classList.toggle('selected', fn.name === selectedFunctionName);
+        row.classList.toggle('selected', type === activeTab && fn.name === selectedFunctionName);
         row.addEventListener('click', () => {
             selectedFunctionName = fn.name;
-            renderSandwichTable(container, data);
-
-            const rightPanel = document.getElementById('sandwich-right-' + container.parentElement.id);
-            fetchSandwichDetail(fn.name, activeTab, resourceFilterParams(resourceFilters), rightPanel);
+            renderSandwichTable(container, rightPanel, type, data);
+            fetchSandwichDetail(fn.name, activeTab, rightPanel);
         });
 
         const nameCell = document.createElement('td');
@@ -934,9 +785,14 @@ function renderSandwichTable(container, data) {
     container.appendChild(table);
 }
 
+// Levels of callers and callees shown in the DAG.
+const DAG_MAX_DEPTH = 7;
+// Direct callers and callees shown in the DAG.
+const DAG_MAX_ROOT_CHILDREN = 7;
+
 function renderDAGGraph(container, sandwichData) {
     if (!sandwichData || !container) return;
-    container.innerHTML = '';
+    container.replaceChildren();
 
     const width = container.clientWidth;
     const height = Math.max(300, container.clientHeight - 40);
@@ -967,13 +823,11 @@ function renderDAGGraph(container, sandwichData) {
     nodeMap.set('center', centerNode);
 
     // Helper to flatten tree and limit depth to 7
-    function addNodesFromTree(root, isCallers, maxDepth = 7) {
+    function addNodesFromTree(root, isCallers) {
         if (!root || !root.children) return;
 
-        const nodesByDepth = [];
-
         function traverse(node, depth, parentId) {
-            if (depth > maxDepth || !node) return;
+            if (depth > DAG_MAX_DEPTH || !node) return;
 
             const key = `${isCallers ? 'C' : 'E'}_${depth}_${parentId}_${node.name}`;
             let currentNode;
@@ -985,14 +839,10 @@ function renderDAGGraph(container, sandwichData) {
                     type: isCallers ? 'caller' : 'callee',
                     value: node.value,
                     depth: depth,
-                    frametype: node.frametype || '',
-                    l: node.l,
-                    libtype: node.libtype
+                    frametype: node.frametype || ''
                 };
                 nodes.push(currentNode);
                 nodeMap.set(key, currentNode);
-                if (!nodesByDepth[depth]) nodesByDepth[depth] = [];
-                nodesByDepth[depth].push(currentNode);
             } else {
                 currentNode = nodeMap.get(key);
             }
@@ -1008,9 +858,9 @@ function renderDAGGraph(container, sandwichData) {
             }
         }
 
-        // Start traversal from root's children (limit to maxDepth immediate callers/callees)
+        // Start traversal from root's children (limit to DAG_MAX_ROOT_CHILDREN immediate callers/callees)
         if (root.children) {
-            root.children.slice(0, maxDepth).forEach(child => {
+            root.children.slice(0, DAG_MAX_ROOT_CHILDREN).forEach(child => {
                 traverse(child, 1, 'center');
             });
         }
@@ -1027,7 +877,7 @@ function renderDAGGraph(container, sandwichData) {
     }
 
     if (nodes.length <= 1) {
-        container.innerHTML = '<div class="status-box">No callers or callees to display</div>';
+        container.replaceChildren(messageElement('status-box', 'No callers or callees to display'));
         return;
     }
 
@@ -1037,38 +887,15 @@ function renderDAGGraph(container, sandwichData) {
     const verticalSpacing = 80;
     const horizontalSpacing = 340;
 
-    // Helper function to wrap text and calculate required height
-    function calculateTextLines(text, maxWidth) {
-        const maxChars = Math.floor(maxWidth / charWidth);
-        if (text.length <= maxChars) return [text];
-
-        const lines = [];
-        let currentLine = '';
-        const words = text.split(/([._-])/);
-
-        for (const word of words) {
-            if ((currentLine + word).length <= maxChars) {
-                currentLine += word;
-            } else {
-                if (currentLine) lines.push(currentLine);
-                currentLine = word;
-            }
-        }
-        if (currentLine) lines.push(currentLine);
-        return lines;
-    }
-
     // Calculate node heights based on text content
     const lineHeight = 14;
     const nodePaddingV = 8;
     const sidePadding = 5;
     nodes.forEach(n => {
-        const lines = calculateTextLines(n.name, nodeWidth - sidePadding * 2);
+        const lines = wrapText(n.name, Math.floor((nodeWidth - sidePadding * 2) / charWidth));
         n.textLines = lines;
         n.nodeHeight = Math.max(40, lines.length * lineHeight + nodePaddingV * 2);
     });
-
-    const nodeHeight = 40;
 
     // Group nodes by type and depth
     const callersByDepth = {};
@@ -1235,63 +1062,40 @@ function renderDAGGraph(container, sandwichData) {
 
     svg.call(zoom);
 
-    // Add tooltip
-    const tooltip = d3.select(container).append('div')
-        .style('position', 'absolute')
-        .style('background', 'rgba(0, 0, 0, 0.8)')
-        .style('color', 'white')
-        .style('padding', '8px 12px')
-        .style('border-radius', '4px')
-        .style('font-size', '11px')
-        .style('font-family', 'monospace')
-        .style('pointer-events', 'none')
-        .style('display', 'none')
-        .style('z-index', '1000')
-        .style('max-width', '400px')
-        .style('word-break', 'break-all');
-
     nodes_g.on('mouseover', function(event, d) {
-        tooltip.style('display', 'block')
-            .style('left', (event.pageX + 12) + 'px')
-            .style('top', (event.pageY - 28) + 'px')
-            .html(null);
-        tooltip.append('strong').text(d.name);
+        const name = document.createElement('strong');
+        name.textContent = d.name;
         if (d.value) {
-            tooltip.append('br');
-            tooltip.append('span').text('Samples: ' + Math.round(d.value));
+            showTooltip(event, name, document.createElement('br'), 'Samples: ' + Math.round(d.value));
+        } else {
+            showTooltip(event, name);
         }
     })
-    .on('mouseleave', () => {
-        tooltip.style('display', 'none');
-    });
+    .on('mouseleave', hideTooltip);
 }
 
 function setupSandwichDivider(divider, leftPanel) {
-    let isResizing = false;
-    let startX = 0;
-    let startWidth = 0;
-
     divider.addEventListener('mousedown', (e) => {
-        isResizing = true;
-        startX = e.clientX;
-        startWidth = leftPanel.clientWidth;
+        const startX = e.clientX;
+        const startWidth = leftPanel.clientWidth;
         document.body.style.userSelect = 'none';
-    });
 
-    document.addEventListener('mousemove', (e) => {
-        if (!isResizing) return;
-        const delta = e.clientX - startX;
-        const newWidth = Math.max(200, startWidth + delta);
-        const container = divider.parentElement;
-        const maxWidth = Math.max(200, container.clientWidth - 200);
-        if (newWidth <= maxWidth) {
-            leftPanel.style.flex = `0 0 ${newWidth}px`;
-        }
-    });
-
-    document.addEventListener('mouseup', () => {
-        isResizing = false;
-        document.body.style.userSelect = '';
+        const onMove = (e) => {
+            const delta = e.clientX - startX;
+            const newWidth = Math.max(200, startWidth + delta);
+            const container = divider.parentElement;
+            const maxWidth = Math.max(200, container.clientWidth - 200);
+            if (newWidth <= maxWidth) {
+                leftPanel.style.flex = `0 0 ${newWidth}px`;
+            }
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = '';
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
     });
 }
 

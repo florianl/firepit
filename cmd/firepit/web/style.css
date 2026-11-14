@@ -29,10 +29,14 @@ body {
     scrollbar-gutter: stable;
 }
 .tab-panel {
+    display: none;
     width: 100%;
 }
-.flame-graph {
-    width: 100%;
+.tab-panel.active {
+    display: block;
+}
+.tab-panel.active.sandwich-container {
+    display: flex;
 }
 .status-box {
     padding: 20px;
@@ -74,18 +78,6 @@ body {
     color: white;
     border-color: #2c3e50;
 }
-.tab-panel {
-    display: none;
-}
-.tab-panel.active:not(.sandwich-container) {
-    display: block;
-}
-.tab-panel.active {
-    display: flex;
-}
-.tab-panel.sandwich-container:not(.active) {
-    display: none !important;
-}
 .header-controls {
     display: flex;
     align-items: center;
@@ -99,10 +91,9 @@ body {
     gap: 15px;
 }
 .header-controls-right {
-    display: flex;
     align-items: center;
 }
-.pause-btn {
+.pause-btn, .export-btn {
     background-color: rgba(255, 255, 255, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.4);
     color: white;
@@ -112,13 +103,16 @@ body {
     font-size: 13px;
     transition: background-color 0.2s;
 }
-.pause-btn:hover {
+.pause-btn:hover, .export-btn:hover {
     background-color: rgba(255, 255, 255, 0.3);
 }
-.pause-btn:active {
+.pause-btn:active, .export-btn:active {
     background-color: rgba(255, 255, 255, 0.4);
 }
-.resource-filter {
+.export-btn {
+    white-space: nowrap;
+}
+.resource-filter, .view-mode-filter {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -127,7 +121,7 @@ body {
     color: white;
     font-size: 13px;
 }
-.resource-filter select {
+.resource-filter select, .view-mode-filter select {
     background-color: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.3);
     color: white;
@@ -136,11 +130,11 @@ body {
     font-size: 13px;
     cursor: pointer;
 }
-.resource-filter select option {
+.resource-filter select option, .view-mode-filter select option {
     background-color: #2c3e50;
     color: white;
 }
-.resource-filter select:hover {
+.resource-filter select:hover, .view-mode-filter select:hover {
     background-color: rgba(255, 255, 255, 0.15);
 }
 .resource-filter select:disabled {
@@ -227,23 +221,6 @@ body {
     background-color: rgba(255, 255, 255, 0.2);
     border-color: rgba(255, 255, 255, 0.5);
 }
-.export-btn {
-    background-color: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    color: white;
-    padding: 6px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-    transition: background-color 0.2s;
-    white-space: nowrap;
-}
-.export-btn:hover {
-    background-color: rgba(255, 255, 255, 0.3);
-}
-.export-btn:active {
-    background-color: rgba(255, 255, 255, 0.4);
-}
 svg .flame-dimmed rect {
     fill: #888888 !important;
     opacity: 0.5;
@@ -259,33 +236,12 @@ svg g.flame-highlight text {
     opacity: 1 !important;
     fill: #000000 !important;
 }
-.view-mode-filter {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
 .view-mode-filter label {
     color: white;
     font-size: 13px;
     white-space: nowrap;
 }
-.view-mode-filter select {
-    background-color: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: white;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 13px;
-    cursor: pointer;
-}
-.view-mode-filter select option {
-    background-color: #2c3e50;
-    color: white;
-}
-.view-mode-filter select:hover {
-    background-color: rgba(255, 255, 255, 0.15);
-}
-#heatmap-tooltip {
+#tooltip {
     position: fixed;
     background: rgba(0,0,0,0.8);
     color: white;
@@ -295,9 +251,10 @@ svg g.flame-highlight text {
     pointer-events: none;
     display: none;
     z-index: 1000;
+    max-width: 400px;
+    word-break: break-all;
 }
 .sandwich-container {
-    display: flex;
     width: 100%;
     height: calc(100vh - 240px);
     min-height: 400px;
@@ -328,18 +285,6 @@ svg g.flame-highlight text {
 .sandwich-graph {
     flex: 1;
     overflow: auto;
-    border-bottom: 1px solid #ddd;
-}
-.sandwich-graph:last-child {
-    border-bottom: none;
-}
-.sandwich-graph-label {
-    padding: 8px 12px;
-    background: #f5f5f5;
-    font-weight: 600;
-    font-size: 12px;
-    color: #666;
-    border-bottom: 1px solid #ddd;
 }
 .sandwich-table {
     width: 100%;
@@ -391,17 +336,6 @@ svg g.flame-highlight text {
 .sandwich-table tbody tr.selected {
     background: #e3f2fd;
 }
-.sandwich-section-header {
-    background: #f5f5f5;
-    font-weight: 600;
-    font-size: 12px;
-    padding: 8px 10px !important;
-    color: #666;
-    cursor: default !important;
-}
-.sandwich-section-header:hover {
-    background: #f5f5f5 !important;
-}
 .sandwich-table .function-name {
     font-family: 'Courier New', monospace;
     color: #0066cc;
@@ -410,28 +344,4 @@ svg g.flame-highlight text {
 .sandwich-table .metric {
     text-align: right;
     white-space: nowrap;
-}
-.graph-mode-controls {
-    margin-left: auto;
-    display: flex;
-    gap: 4px;
-    align-items: center;
-}
-.graph-mode-btn {
-    background: white;
-    border: 1px solid #bdc3c7;
-    border-radius: 4px 4px 0 0;
-    padding: 6px 14px;
-    cursor: pointer;
-    font-size: 13px;
-    color: #555;
-    transition: background-color 0.15s;
-}
-.graph-mode-btn:hover {
-    background: #d0d7de;
-}
-.graph-mode-btn.active {
-    background: #2c3e50;
-    color: white;
-    border-color: #2c3e50;
 }

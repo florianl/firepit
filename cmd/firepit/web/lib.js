@@ -70,6 +70,48 @@ export function hasData(root) {
     return Boolean(root && root.children && root.children.length > 0);
 }
 
+// hasHeatMapData reports whether a heatmap covers at least one second.
+export function hasHeatMapData(d) {
+    return Boolean(d && d.numSeconds > 0);
+}
+
+// hasSandwichData reports whether a sandwich view has any functions.
+export function hasSandwichData(d) {
+    return Boolean(d && d.functions && d.functions.length > 0);
+}
+
+// heatMapCells returns the non-zero cells of a heatmap as {xi, yi, v}, with
+// xi the second and yi the sub-bucket.
+export function heatMapCells(d) {
+    const cells = [];
+    for (let xi = 0; xi < d.numSeconds; xi++) {
+        for (let yi = 0; yi < d.numSubBuckets; yi++) {
+            const v = d.cells[xi * d.numSubBuckets + yi];
+            if (v > 0) cells.push({ xi, yi, v });
+        }
+    }
+    return cells;
+}
+
+// wrapText splits text into lines of at most maxChars characters, breaking
+// after or before '.', '_' and '-'. Longer pieces get a line of their own.
+export function wrapText(text, maxChars) {
+    if (text.length <= maxChars) return [text];
+
+    const lines = [];
+    let currentLine = '';
+    for (const word of text.split(/([._-])/)) {
+        if ((currentLine + word).length <= maxChars) {
+            currentLine += word;
+        } else {
+            if (currentLine) lines.push(currentLine);
+            currentLine = word;
+        }
+    }
+    if (currentLine) lines.push(currentLine);
+    return lines;
+}
+
 export function formatTime(value) {
     return Math.round(value).toString();
 }
@@ -95,6 +137,12 @@ export function sortSandwichFunctions(functions, column, ascending) {
 // a list of {key, value}.
 export function resourceFilterParams(filters) {
     return filters.map(f => f.key + ':' + f.value);
+}
+
+// offeredResourceFilters returns the filters whose value attributes, a map
+// of key to values, still offers. Other filters would hide all profiles.
+export function offeredResourceFilters(filters, attributes) {
+    return filters.filter(f => (attributes.get(f.key) || []).includes(f.value));
 }
 
 // matchesFrameFilter reports whether a frame is highlighted by the frame
